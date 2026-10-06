@@ -6,21 +6,32 @@ work, review code, and practice technical conversations while walking.
 ## Current architecture
 
 - `frontend/` — React Native + Expo + TypeScript mobile client.
-- `backend/` — Python + FastAPI service with the initial health endpoint.
+- `backend/` — Python + FastAPI service with async MongoDB connectivity and a
+  database-aware health endpoint.
 - `docs/` — Project documentation.
 - `scripts/` — Small development and automation scripts.
 
+The current request path is:
+
+```text
+React Native / Expo
+        ↓
+FastAPI
+        ↓
+MongoDB
+```
+
 The initial foundation uses REST between the mobile client and API. GitHub,
-MongoDB, authentication, realtime voice, and AI model integrations will be
-added in later phases. The AI architecture is intended to support local,
-open-weight inference through Ollama, with Whisper/faster-whisper for speech
-recognition and Kokoro or Piper for speech synthesis.
+authentication, realtime voice, and AI model integrations will be added in
+later phases. The planned AI architecture supports local, open-weight
+inference through Ollama, with Whisper/faster-whisper for speech recognition
+and Kokoro or Piper for speech synthesis.
 
 ## Technology stack
 
 - React Native, Expo, and TypeScript
 - Python and FastAPI
-- MongoDB (planned)
+- MongoDB with PyMongo's async driver
 - GitHub API (planned)
 - Open-weight AI with local inference support (planned)
 
@@ -54,8 +65,21 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
+cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
+Git Out expects a MongoDB instance at the `MONGODB_URI` configured in
+`backend/.env`. The API starts if MongoDB is unavailable, but reports a
+degraded state until the database can be reached.
+
 The API is available at `http://localhost:8000`; its health check is
-`GET /health`.
+`GET /health`. Run backend tests with:
+
+```bash
+pytest
+```
+
+The default test suite covers the unavailable-database path. The MongoDB
+integration check runs against the configured URI and is skipped when no
+MongoDB instance is available.
