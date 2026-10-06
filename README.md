@@ -7,18 +7,18 @@ work, review code, and practice technical conversations while walking.
 
 - `frontend/` — React Native + Expo + TypeScript mobile client.
 - `backend/` — Python + FastAPI service with async MongoDB connectivity, a
-  database-aware health endpoint, and a GitHub REST integration.
+  database-aware health endpoint, GitHub REST integration, and a local AI
+  runtime integration.
 - `docs/` — Project documentation.
 - `scripts/` — Small development and automation scripts.
 
 The current request path is:
 
 ```text
-React Native / Expo
-        ↓
-FastAPI
-        ↓
-MongoDB
+React Native / Expo → FastAPI
+                         ├── MongoDB
+                         ├── GitHub API
+                         └── Ollama (local AI)
 ```
 
 The initial foundation uses REST between the mobile client and API. GitHub
@@ -35,7 +35,7 @@ and Kokoro or Piper for speech synthesis.
 - Python and FastAPI
 - MongoDB with PyMongo's async driver
 - GitHub REST API integration
-- Open-weight AI with local inference support (planned)
+- Open-weight AI through a local Ollama runtime
 
 ## Development setup
 
@@ -112,3 +112,35 @@ GitHub error responses use stable, sanitized messages:
 | GitHub 403 (permissions or rate limit) | 403 |
 | GitHub 404, other unexpected status, or malformed response | 502 |
 | GitHub 429, 5xx, timeout, or network failure | 503 |
+
+### Local open-source AI
+
+Git Out uses Ollama as a replaceable local HTTP runtime for the first AI
+integration. The default model is `qwen3:4b`, a small open-weight instruct
+model selected for practical local development. Local inference supports
+privacy-conscious experimentation and reduces dependence on proprietary AI
+APIs, while keeping the model boundary replaceable and supporting open
+innovation. GitHub access still requires network connectivity.
+
+Install Ollama from the [official download page](https://ollama.com/download),
+then run the local server and pull the configured model:
+
+```bash
+# Keep this process running in one terminal.
+ollama serve
+
+# Run this in another terminal.
+ollama pull qwen3:4b
+```
+
+With the backend running, send a non-streaming request to:
+
+```bash
+curl -X POST http://localhost:8000/ai/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Give me a one sentence explanation of Git."}'
+```
+
+Live AI requests require Ollama and the configured model to be available.
+Automated tests mock the Ollama HTTP API and do not download or require a
+model.

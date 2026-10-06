@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     github_api_base_url: str = "https://api.github.com"
     github_timeout_seconds: float = Field(default=10.0, gt=0)
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen3:4b"
+    ollama_timeout_seconds: float = Field(default=60.0, gt=0)
 
 
 @lru_cache
