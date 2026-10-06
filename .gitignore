@@ -8,6 +8,9 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
+frontend/models/
+**/models/*.gguf
+**/*.gguf
 ios/
 android/
 **/ios/

@@ -5,20 +5,23 @@ work, review code, and practice technical conversations while walking.
 
 ## Current architecture
 
-- `frontend/` — React Native + Expo + TypeScript mobile client.
+- `frontend/` — React Native + Expo + TypeScript mobile client with an
+  Android-first local LLM spike.
 - `backend/` — Python + FastAPI service with async MongoDB connectivity, a
   database-aware health endpoint, GitHub REST integration, and a local AI
   runtime integration.
 - `docs/` — Project documentation.
 - `scripts/` — Small development and automation scripts.
 
-The current request path is:
+The current request paths are:
 
 ```text
 React Native / Expo → FastAPI
                          ├── MongoDB
                          ├── GitHub API
                          └── Ollama (local AI)
+
+React Native / Expo → llama.rn → local GGUF model
 ```
 
 The initial foundation uses REST between the mobile client and API. GitHub
@@ -58,7 +61,10 @@ npm start
 ```
 
 Use the Expo CLI output to open the app in Expo Go, an emulator, or a
-development build. The web target is also available with `npm run web`.
+development build. The local AI screen requires a native development build;
+run `npm run android` with an Android SDK and device/emulator available. The
+web target remains available with `npm run web`, but local llama.cpp inference
+is Android-only in this spike.
 
 ### Backend
 
@@ -144,3 +150,54 @@ curl -X POST http://localhost:8000/ai/chat \
 Live AI requests require Ollama and the configured model to be available.
 Automated tests mock the Ollama HTTP API and do not download or require a
 model.
+
+### Mobile Local AI
+
+The mobile path is independent of FastAPI, Ollama, and `/ai/chat`:
+
+```text
+React Native
+    ↓
+LocalAI interface
+    ↓
+llama.rn 0.12.9 (llama.cpp)
+    ↓
+Qwen2.5-1.5B-Instruct Q4_K_M GGUF
+```
+
+The selected model is [Qwen2.5-1.5B-Instruct Q4_K_M GGUF](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/qwen2.5-1.5b-instruct-q4_k_m.gguf):
+
+- 1.54B parameters
+- Q4_K_M quantization
+- 1,117,320,736 bytes (about 1.04 GiB)
+- Apache-2.0 license
+- Plan for roughly 2 GiB or more of free app memory; actual use depends on
+  device, Android version, context size, and runtime allocation.
+
+The app does not bundle or download model weights. Download the model during
+development using the linked model page, place the `.gguf` file in the Android
+device's `Download` folder, then use **Choose GGUF** in the local AI screen.
+The app copies the selected file into its private `models/` directory. Local
+model files and `*.gguf` files are ignored by Git.
+
+Build the native development app with:
+
+```bash
+cd frontend
+npm install
+npx expo prebuild --platform android
+npm run android
+```
+
+The native runtime is configured for the New Architecture and CPU inference
+on `arm64-v8a` and `x86_64`. The screen exposes model loading, unload, prompt
+generation, and user-readable load/inference errors. It uses no network call
+for inference. For the critical offline check, install the development build,
+copy the model to the device before disconnecting it, then turn off Wi-Fi and
+mobile data, stop FastAPI and Ollama, load the model, and generate a response.
+
+Backend Ollama remains a development/runtime fallback from Phase 3. The mobile
+local inference path is the target architecture for the actual Git Out
+experience; these paths are intentionally separate. This environment has no
+Android SDK, emulator, or device, so real Android offline verification is
+still pending.
