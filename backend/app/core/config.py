@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     mongodb_server_selection_timeout_ms: int = Field(default=1000, ge=100)
     environment: str = "development"
     debug: bool = False
+    github_token: SecretStr | None = None
+    github_api_base_url: str = "https://api.github.com"
+    github_timeout_seconds: float = Field(default=10.0, gt=0)
 
 
 @lru_cache

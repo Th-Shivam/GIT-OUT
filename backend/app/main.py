@@ -4,6 +4,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from app.api.routes.github import router as github_router
 from app.api.routes.health import router as health_router
 from app.core.config import Settings, get_settings
 from app.db.mongodb import MongoDB
@@ -43,6 +44,7 @@ def create_app(
     application.state.settings = resolved_settings
     application.state.mongodb = resolved_mongodb
     application.include_router(health_router)
+    application.include_router(github_router)
     return application
 
 
