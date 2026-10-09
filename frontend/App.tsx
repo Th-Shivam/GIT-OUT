@@ -18,12 +18,27 @@ import {
   pickAndStoreModel,
   type StoredModel,
 } from './src/local-ai';
+import {
+  DEFAULT_SPEECH_LANGUAGE,
+  NativeSpeechError,
+  transcriptForPrompt,
+  useSpeechRecognition,
+} from './src/local-stt';
 
 export default function App() {
   const localAI = useMemo(() => new LocalAI(new LlamaRNEngine()), []);
+  const {
+    isChecking,
+    isRecording,
+    partialTranscript,
+    startRecognition,
+    stopRecognition,
+  } = useSpeechRecognition();
   const [model, setModel] = useState<StoredModel | null>(null);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [loadProgress, setLoadProgress] = useState(0);
+  const [speechLanguage, setSpeechLanguage] = useState(DEFAULT_SPEECH_LANGUAGE);
+  const [transcript, setTranscript] = useState('');
   const [prompt, setPrompt] = useState('Explain what a pull request is');
   const [response, setResponse] = useState('');
   const [error, setError] = useState('');
@@ -90,9 +105,34 @@ export default function App() {
       setResponse(await localAI.generate(prompt));
     });
 
+  const recordOrTranscribe = () => {
+    if (isRecording) {
+      stopRecognition();
+      return;
+    }
+
+    setError('');
+    setTranscript('');
+    void startRecognition(speechLanguage.trim())
+      .then((nextTranscript) => {
+        const promptText = transcriptForPrompt(nextTranscript);
+        setTranscript(promptText);
+        setPrompt(promptText);
+      })
+      .catch((actionError) => {
+        setError(
+          actionError instanceof NativeSpeechError
+            ? actionError.message
+            : actionError instanceof Error
+              ? actionError.message
+              : 'The offline speech action failed.',
+        );
+      });
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.eyebrow}>GIT OUT · PHASE 4</Text>
+      <Text style={styles.eyebrow}>GIT OUT · PHASE 5</Text>
       <Text style={styles.title}>Local AI</Text>
       <Text style={styles.subtitle}>
         A small Android-first proof that inference can happen on the device.
@@ -108,14 +148,61 @@ export default function App() {
           <Text style={styles.progress}>{Math.round(loadProgress * 100)}% loading</Text>
         ) : null}
         <View style={styles.buttonRow}>
-          <ActionButton label="Choose GGUF" onPress={chooseModel} disabled={busy} />
+          <ActionButton
+            label="Choose GGUF"
+            onPress={chooseModel}
+            disabled={busy || isChecking || isRecording}
+          />
           <ActionButton
             label={modelLoaded ? 'Unload' : 'Load model'}
             onPress={modelLoaded ? unloadModel : loadModel}
-            disabled={busy || (!modelLoaded && !model)}
+            disabled={busy || isChecking || isRecording || (!modelLoaded && !model)}
             secondary
           />
         </View>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <Text style={styles.label}>Offline speech input</Text>
+          <Text style={styles.localBadge}>ANDROID ON-DEVICE</Text>
+        </View>
+        <Text style={styles.label}>Language (BCP-47)</Text>
+        <TextInput
+          value={speechLanguage}
+          onChangeText={setSpeechLanguage}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="en-US"
+          placeholderTextColor="#7d887f"
+          style={styles.languageInput}
+        />
+        <Text style={styles.hint}>
+          {isChecking
+            ? 'Checking Android on-device support and installed language models...'
+            : isRecording
+              ? 'Listening on the device. Tap stop when you finish speaking.'
+              : 'Git Out checks the installed offline language before listening and never falls back to network recognition.'}
+        </Text>
+        <ActionButton
+          label={
+            isRecording
+              ? 'Stop and transcribe'
+              : isChecking
+                ? 'Checking offline support...'
+                : 'Record prompt'
+          }
+          onPress={recordOrTranscribe}
+          disabled={isChecking || busy}
+        />
+        {partialTranscript || transcript ? (
+          <View style={styles.transcriptBox}>
+            <Text style={styles.transcriptLabel}>
+              {partialTranscript ? 'Listening transcript' : 'Transcript · copied to prompt'}
+            </Text>
+            <Text style={styles.transcript}>{partialTranscript || transcript}</Text>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.card}>
@@ -131,7 +218,7 @@ export default function App() {
         <ActionButton
           label={busy ? 'Working...' : 'Generate'}
           onPress={generate}
-          disabled={busy || !modelLoaded || !prompt.trim()}
+          disabled={busy || isChecking || isRecording || !modelLoaded || !prompt.trim()}
         />
         {busy ? <ActivityIndicator color="#f4f1e8" style={styles.spinner} /> : null}
       </View>
@@ -144,7 +231,7 @@ export default function App() {
 
       <View style={styles.responseBox}>
         <View style={styles.row}>
-          <Text style={styles.label}>Response</Text>
+          <Text style={styles.responseLabel}>Response</Text>
           <Text style={styles.localBadge}>LOCAL DEVICE</Text>
         </View>
         <Text style={response ? styles.response : styles.emptyResponse}>
@@ -214,6 +301,19 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     marginTop: 16,
     marginBottom: 8,
+  },
+  hint: {
+    color: '#d0e2d3',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  languageInput: {
+    backgroundColor: '#fffdf7',
+    borderRadius: 12,
+    color: '#1e2a23',
+    fontSize: 16,
+    minHeight: 46,
+    paddingHorizontal: 14,
   },
   card: {
     backgroundColor: '#26382d',
@@ -296,6 +396,24 @@ const styles = StyleSheet.create({
     padding: 14,
     textAlignVertical: 'top',
   },
+  transcriptBox: {
+    backgroundColor: '#fffdf7',
+    borderRadius: 12,
+    gap: 8,
+    padding: 14,
+  },
+  transcriptLabel: {
+    color: '#2f6f4e',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  transcript: {
+    color: '#1e2a23',
+    fontSize: 16,
+    lineHeight: 23,
+  },
   spinner: {
     position: 'absolute',
     right: 32,
@@ -316,6 +434,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 1,
+  },
+  responseLabel: {
+    color: '#526056',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
   response: {
     color: '#1e2a23',
