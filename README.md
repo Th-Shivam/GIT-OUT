@@ -22,15 +22,16 @@ React Native / Expo → FastAPI
                          └── Ollama (local AI)
 
 React Native / Expo → llama.rn → local GGUF model
+
+React Native / Expo → Android SpeechRecognizer → on-device system speech model
 ```
 
 The initial foundation uses REST between the mobile client and API. GitHub
 calls follow route → service → async HTTP client → GitHub API, without storing
 GitHub data in MongoDB. Authentication, realtime voice, and AI model
-integrations will be added in later phases. The planned AI architecture
-supports local, open-weight
-inference through Ollama, with Whisper/faster-whisper for speech recognition
-and Kokoro or Piper for speech synthesis.
+integrations will be added in later phases. The mobile speech path uses
+Android's native on-device recognizer; future speech synthesis may use Kokoro
+or Piper.
 
 ## Technology stack
 
@@ -201,3 +202,64 @@ local inference path is the target architecture for the actual Git Out
 experience; these paths are intentionally separate. This environment has no
 Android SDK, emulator, or device, so real Android offline verification is
 still pending.
+
+### Mobile Local STT
+
+The Phase 5 speech path is independent of FastAPI, Ollama, cloud speech
+services, and bundled speech model weights:
+
+```text
+Microphone
+    ↓
+Android SpeechRecognizer
+    ↓
+Native Android on-device speech service
+```
+
+The app uses the maintained
+[`expo-speech-recognition`](https://github.com/jamsch/expo-speech-recognition)
+integration. Git Out requests `requiresOnDeviceRecognition: true`, which uses
+Android's explicit on-device recognizer on Android 13+ in this implementation.
+It deliberately does not rely on `EXTRA_PREFER_OFFLINE`: Android documents that
+hint as optional and allows recognizers to ignore it. If explicit on-device
+recognition is unavailable, the requested language model is not installed, or
+microphone permission is denied, Git Out stops before starting recognition and
+shows an actionable error. It never silently falls back to a network recognizer.
+
+The screen lets the user enter a BCP-47 language tag, defaulting to `en-US`.
+Before each recording, the app checks the device's installed on-device locale
+list and starts only with a matching language. A successful transcript replaces
+the current prompt text; manual prompt entry remains available. Text-to-speech
+and continuous listening are outside this phase.
+
+On-device availability depends on the Android version, recognition service, and
+downloaded system language packs:
+
+- Android 13/API 33 or newer is required by this app's explicit on-device path.
+- The device must report on-device recognition support and have the requested
+  language installed for offline use.
+- If the language is missing, install it from the device's on-device speech
+  recognition settings (often under **Settings → Security and privacy → More
+  privacy settings → Android System Intelligence → On-device speech
+  recognition**) and retry.
+- Recognition speed and accuracy depend on the system service, device, and
+  language pack. No model is stored in the Git Out app or repository.
+
+Build the native development app after installing the dependencies and
+regenerating native code:
+
+```bash
+cd frontend
+npm install
+npx expo prebuild --platform android
+npm run android
+```
+
+The critical offline STT check is: install the development build, ensure the
+requested system language pack is installed, turn off Wi-Fi and mobile data,
+stop FastAPI and Ollama, enter the installed language tag, record a short
+sentence, and confirm the transcript appears in the prompt input. Also verify
+that the app gives a clear unavailable-language/device message when the offline
+pack is absent. This repository's development environment has no connected
+Android device, so actual offline recognition remains pending until that phone
+test is performed.
