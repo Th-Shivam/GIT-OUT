@@ -31,6 +31,17 @@
         }
       ],
       [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow Git Out to use the microphone for on-device speech recognition.",
+          "androidSpeechServicePackages": [
+            "com.google.android.as",
+            "com.google.android.tts",
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
+      ],
+      [
         "llama.rn",
         {
           "forceCxx20": true,
