@@ -16,12 +16,21 @@ export interface TTSEvent {
   message?: string;
 }
 
+export type TTSMediaAction = 'play' | 'pause' | 'stop' | 'toggle';
+
+export interface TTSMediaEvent {
+  id: string;
+  action: TTSMediaAction;
+}
+
 export interface TTSEngine {
   initialize(): Promise<TTSCapabilities>;
   speak(id: string, text: string, language: string, voiceId: string): Promise<void>;
   stop(): Promise<void>;
   shutdown(): Promise<void>;
   subscribe(listener: (event: TTSEvent) => void): () => void;
+  subscribeMedia?(listener: (event: TTSMediaEvent) => void): () => void;
+  setPocketControls?(enabled: boolean): Promise<void>;
 }
 
 export interface TTSSnapshot {

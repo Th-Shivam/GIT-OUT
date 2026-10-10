@@ -123,4 +123,24 @@ describe('LocalTTS', () => {
     expect(engine.shutdown).toHaveBeenCalledOnce();
     expect(listeners.size).toBe(0);
   });
+
+  it('backgrounding cancels initialization but preserves an active native utterance', async () => {
+    const { engine, emit } = fakeTTS();
+    const tts = new LocalTTS(engine);
+    const init = deferred<typeof capabilities>();
+    const entered = deferred<void>();
+    engine.initialize.mockImplementationOnce(() => { entered.resolve(); return init.promise; });
+    const pending = tts.speak('Stale', 'en-US');
+    await entered.promise;
+    tts.cancelPendingSpeech();
+    init.resolve(capabilities);
+    await pending;
+    expect(engine.speak).not.toHaveBeenCalled();
+    await tts.speak('Active', 'en-US');
+    emit({ id: engine.speak.mock.calls[0][0], state: 'speaking' });
+    const stops = engine.stop.mock.calls.length;
+    tts.cancelPendingSpeech();
+    expect(tts.getSnapshot().state).toBe('speaking');
+    expect(engine.stop).toHaveBeenCalledTimes(stops);
+  });
 });

@@ -36,6 +36,22 @@ describe('VoiceConversation', () => {
     expect(engine.speak.mock.calls[0][1]).toBe('Saved answer');
   });
 
+  it('keeps already-started speech playing when the app is backgrounded', async () => {
+    const stop = vi.fn(async () => undefined);
+    const speak = vi.fn(async () => undefined);
+    const conversation = new VoiceConversation(
+      { generate: async () => 'A background-safe answer' },
+      { speak, stop, shutdown: async () => undefined },
+    );
+    conversation.setSpeakResponse(true);
+    await conversation.generate('hello');
+
+    conversation.setForeground(false);
+
+    expect(speak).toHaveBeenCalledWith('A background-safe answer', 'en-US');
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it('stops playback before a new generation and ignores rapid duplicate submits', async () => {
     const result = deferred<string>();
     const generate = vi.fn(() => result.promise);

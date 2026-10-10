@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import {
   ActivityIndicator,
   AppState,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -28,9 +29,14 @@ import {
 } from './src/local-stt';
 import { LocalTTS } from './src/local-tts/localTTS';
 import { NativeTTSEngine } from './src/local-tts/nativeTTSEngine';
+import type { TTSMediaEvent } from './src/local-tts/types';
 import { VoiceConversation } from './src/voice-conversation/voiceConversation';
 import { PocketMode } from './src/pocket-mode/PocketMode';
-import { pocketState } from './src/pocket-mode/pocketControls';
+import {
+  pocketAction,
+  PocketCommandGate,
+  pocketState,
+} from './src/pocket-mode/pocketControls';
 
 export default function App() {
   const localAI = useMemo(() => new LocalAI(new LlamaRNEngine()), []);
@@ -65,6 +71,8 @@ export default function App() {
   const pocketRef = useRef(false);
   const turnRef = useRef(0);
   const previousSpeakRef = useRef(false);
+  const mediaGateRef = useRef(new PocketCommandGate());
+  const mediaActionHandlerRef = useRef<(event: TTSMediaEvent) => void>(() => undefined);
   const working = busy || generating;
   const microphoneBusy = startingMic || isChecking || isRecording || isTranscribing;
   const ttsActive = speechOutput.state === 'preparing' || speechOutput.state === 'speaking';
@@ -205,6 +213,41 @@ export default function App() {
     setPocketEnabled(false);
     conversation.setSpeakResponse(previousSpeakRef.current);
   };
+
+  mediaActionHandlerRef.current = (event) => {
+    if (!mediaGateRef.current.accept(event.id, event.action, Date.now())) return;
+    const state = pocketState({
+      listening: isRecording,
+      transcribing: isTranscribing || startingMic,
+      thinking: generating,
+      speaking: ttsActive,
+      error: error || inferenceError || speechOutput.error,
+    });
+    const action = pocketAction(event.action, state, AppState.currentState === 'active');
+    if (action === 'stop') {
+      if (pocketRef.current) stopPocket();
+      else void conversation.stopSpeaking().catch(() => undefined);
+    } else if (action === 'finish' && isRecording) {
+      stopRecognition();
+    } else if (action === 'record' && pocketRef.current) {
+      recordOrTranscribe();
+    }
+  };
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    try {
+      return tts.subscribeMedia((event) => mediaActionHandlerRef.current(event));
+    } catch {
+      return undefined;
+    }
+  }, [tts]);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      void tts.setPocketControls(pocketEnabled).catch(() => undefined);
+    }
+  }, [tts, pocketEnabled]);
 
   if (pocketEnabled) {
     return <PocketMode

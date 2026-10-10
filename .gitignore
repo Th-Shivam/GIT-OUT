@@ -17,6 +17,7 @@ android/
 **/android/
 # Hand-written local Expo module source (not the generated app project).
 !frontend/modules/git-out-tts/android/
+frontend/modules/**/android/.gradle/
 .metro-health-check*
 
 # Python

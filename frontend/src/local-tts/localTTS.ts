@@ -1,4 +1,10 @@
-import { ttsErrorMessage, type TTSEngine, type TTSSnapshot, type TTSVoice } from './types';
+import {
+  ttsErrorMessage,
+  type TTSEngine,
+  type TTSSnapshot,
+  type TTSVoice,
+  type TTSMediaEvent,
+} from './types';
 
 function selectVoice(voices: TTSVoice[], language: string): TTSVoice {
   const requested = language.trim().replace(/_/g, '-').toLowerCase();
@@ -28,6 +34,18 @@ export class LocalTTS {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };
   };
+
+  subscribeMedia(listener: (event: TTSMediaEvent) => void): () => void {
+    return this.engine.subscribeMedia?.(listener) ?? (() => undefined);
+  }
+
+  setPocketControls(enabled: boolean): Promise<void> {
+    return this.engine.setPocketControls?.(enabled) ?? Promise.resolve();
+  }
+
+  cancelPendingSpeech() {
+    if (this.snapshot.state === 'preparing') void this.stop().catch(() => undefined);
+  }
 
   private update(change: Partial<TTSSnapshot>) {
     this.snapshot = { ...this.snapshot, ...change };

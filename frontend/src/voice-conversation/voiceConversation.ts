@@ -22,7 +22,7 @@ export class VoiceConversation {
 
   constructor(
     private readonly localAI: Pick<LocalAI, 'generate'>,
-    private readonly tts: Pick<LocalTTS, 'speak' | 'stop' | 'shutdown'>,
+    private readonly tts: Pick<LocalTTS, 'speak' | 'stop' | 'shutdown'> & Partial<Pick<LocalTTS, 'cancelPendingSpeech'>>,
   ) {}
 
   getSnapshot = (): ConversationSnapshot => this.snapshot;
@@ -85,7 +85,12 @@ export class VoiceConversation {
 
   setForeground(foreground: boolean) {
     this.foreground = foreground;
-    if (!foreground) void this.stopSpeaking().catch(() => undefined);
+    if (!foreground) {
+      // Let an utterance that already reached native TTS finish. Invalidate
+      // only speech that is still waiting behind local inference.
+      ++this.speechRevision;
+      this.tts.cancelPendingSpeech?.();
+    }
   }
 
   // React development builds can mount/cleanup/mount effects on the same instance.

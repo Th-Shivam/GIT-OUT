@@ -1,10 +1,11 @@
 import { requireOptionalNativeModule } from 'expo';
 import { Platform } from 'react-native';
 
-import type { TTSEngine, TTSEvent } from './types';
+import type { TTSEngine, TTSEvent, TTSMediaEvent } from './types';
 
 interface NativeTTS extends Omit<TTSEngine, 'subscribe'> {
   addListener(name: 'utterance', listener: (event: TTSEvent) => void): { remove(): void };
+  addListener(name: 'mediaAction', listener: (event: TTSMediaEvent) => void): { remove(): void };
 }
 
 export class NativeTTSEngine implements TTSEngine {
@@ -27,8 +28,16 @@ export class NativeTTSEngine implements TTSEngine {
   }
   async stop() { await this.module?.stop(); }
   async shutdown() { await this.module?.shutdown(); }
+  async setPocketControls(enabled: boolean) {
+    await this.getModule().setPocketControls?.(enabled);
+  }
   subscribe(listener: (event: TTSEvent) => void) {
     const subscription = this.getModule().addListener('utterance', listener);
+    return () => subscription.remove();
+  }
+
+  subscribeMedia(listener: (event: TTSMediaEvent) => void) {
+    const subscription = this.getModule().addListener('mediaAction', listener);
     return () => subscription.remove();
   }
 }
