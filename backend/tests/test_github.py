@@ -178,6 +178,87 @@ def test_github_me_handles_unexpected_user_response() -> None:
     assert "test-github-token" not in response.text
 
 
+@respx.mock
+def test_github_browse_endpoints_return_safe_read_models() -> None:
+    respx.get("https://api.github.com/user/repos").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": 7,
+                    "name": "git-out",
+                    "full_name": "octocat/git-out",
+                    "private": False,
+                    "description": "A voice-first companion",
+                    "html_url": "https://github.com/octocat/git-out",
+                    "language": "TypeScript",
+                    "stargazers_count": 3,
+                    "open_issues_count": 2,
+                    "updated_at": "2026-10-10T00:00:00Z",
+                    "owner": {"login": "octocat", "token": "secret"},
+                }
+            ],
+        )
+    )
+    respx.get("https://api.github.com/issues").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": 8,
+                    "number": 4,
+                    "title": "Add offline docs",
+                    "state": "open",
+                    "html_url": "https://github.com/octocat/git-out/issues/4",
+                    "repository_url": "https://api.github.com/repos/octocat/git-out",
+                }
+            ],
+        )
+    )
+
+    with TestClient(github_app()) as client:
+        repositories = client.get("/github/repos", params={"per_page": 5})
+        issues = client.get("/github/issues")
+
+    assert repositories.status_code == 200
+    assert repositories.json()[0]["full_name"] == "octocat/git-out"
+    assert "owner" not in repositories.json()[0]
+    assert issues.status_code == 200
+    assert issues.json()[0]["title"] == "Add offline docs"
+
+
+@respx.mock
+def test_github_commit_endpoint_flattens_commit_metadata() -> None:
+    respx.get("https://api.github.com/repos/octocat/git-out/commits").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "sha": "abc123",
+                    "html_url": "https://github.com/octocat/git-out/commit/abc123",
+                    "commit": {
+                        "message": "Improve Pocket Mode\n\nDetails",
+                        "author": {"name": "Octocat", "email": "private@example.com"},
+                    },
+                }
+            ],
+        )
+    )
+
+    with TestClient(github_app()) as client:
+        response = client.get("/github/repos/octocat/git-out/commits")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "sha": "abc123",
+            "html_url": "https://github.com/octocat/git-out/commit/abc123",
+            "message": "Improve Pocket Mode",
+            "author": "Octocat",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     ("method", "arguments", "path", "params"),
     [
