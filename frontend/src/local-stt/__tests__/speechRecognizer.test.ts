@@ -99,4 +99,30 @@ describe('AndroidSpeechRecognizer', () => {
       requiresOnDeviceRecognition: true,
     });
   });
+
+  it('does not open the microphone after cancellation during the permission prompt', async () => {
+    const module = new FakeModule();
+    let cancelled = false;
+    module.requestMicrophonePermissionsAsync = async () => {
+      cancelled = true;
+      return { granted: true };
+    };
+    const recognizer = new AndroidSpeechRecognizer(module, androidApi34);
+    await expect(recognizer.start('en-US', undefined, () => cancelled)).rejects.toMatchObject({ code: 'ABORTED' });
+    expect(module.startOptions).toBeNull();
+  });
+
+  it('cancels without relying on a native error event and preserves the on-device path on retry', async () => {
+    const module = new FakeModule();
+    module.abort = () => undefined;
+    const recognizer = new AndroidSpeechRecognizer(module, androidApi34);
+    const session = await recognizer.start('en-US');
+    const failure = expect(session.promise).rejects.toMatchObject({ code: 'ABORTED' });
+    session.cancel();
+    await failure;
+    const retry = await recognizer.start('en-US');
+    module.emit('result', { isFinal: true, results: [{ transcript: 'Retry prompt' }] });
+    await expect(retry.promise).resolves.toBe('Retry prompt');
+    expect(module.startOptions?.requiresOnDeviceRecognition).toBe(true);
+  });
 });

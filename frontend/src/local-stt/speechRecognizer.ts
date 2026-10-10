@@ -101,6 +101,7 @@ export class AndroidSpeechRecognizer {
   async start(
     language: string,
     onPartialResult?: (transcript: string) => void,
+    isCancelled: () => boolean = () => false,
   ): Promise<SpeechRecognitionSession> {
     if (this.activeSession) {
       throw new NativeSpeechError(
@@ -109,7 +110,12 @@ export class AndroidSpeechRecognizer {
       );
     }
 
+    const checkCancelled = () => {
+      if (isCancelled()) throw new NativeSpeechError('ABORTED', 'Speech input was cancelled. Return to Git Out and tap Record prompt again.');
+    };
+    checkCancelled();
     const permission = await this.module.requestMicrophonePermissionsAsync();
+    checkCancelled();
     if (!permission.granted) {
       throw new NativeSpeechError(
         'MICROPHONE_PERMISSION_DENIED',
@@ -118,6 +124,7 @@ export class AndroidSpeechRecognizer {
     }
 
     const availability = await this.checkAvailability(language);
+    checkCancelled();
     let resolveResult!: (transcript: string) => void;
     let rejectResult!: (error: NativeSpeechError) => void;
     let subscriptions: SpeechRecognitionSubscription[] = [];
@@ -155,7 +162,10 @@ export class AndroidSpeechRecognizer {
       stop: () => this.module.stop(),
       cancel: () => {
         if (!settled) {
-          this.module.abort();
+          rejectSession(new NativeSpeechError('ABORTED', 'Speech input was cancelled. Tap Record prompt to retry.'));
+          try { this.module.abort(); } catch {
+            // Native teardown may already have released the module on unmount.
+          }
         }
       },
     };
