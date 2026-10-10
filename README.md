@@ -6,7 +6,7 @@ work, review code, and practice technical conversations while walking.
 ## Current architecture
 
 - `frontend/` — React Native + Expo + TypeScript mobile client with an
-  Android-first local LLM spike.
+  Android-first local LLM, native speech input, and native speech output.
 - `backend/` — Python + FastAPI service with async MongoDB connectivity, a
   database-aware health endpoint, GitHub REST integration, and a local AI
   runtime integration.
@@ -24,14 +24,17 @@ React Native / Expo → FastAPI
 React Native / Expo → llama.rn → local GGUF model
 
 React Native / Expo → Android SpeechRecognizer → on-device system speech model
+
+Native Android STT → editable prompt → manual Generate → local Qwen/llama.rn
+    → final text answer → Android TextToSpeech → installed non-network voice
 ```
 
 The initial foundation uses REST between the mobile client and API. GitHub
 calls follow route → service → async HTTP client → GitHub API, without storing
 GitHub data in MongoDB. Authentication, realtime voice, and AI model
 integrations will be added in later phases. The mobile speech path uses
-Android's native on-device recognizer; future speech synthesis may use Kokoro
-or Piper.
+Android's native on-device recognizer and TextToSpeech engine, with local Qwen
+inference through `llama.rn`.
 
 ## Technology stack
 
@@ -61,8 +64,7 @@ npm install
 npm start
 ```
 
-Use the Expo CLI output to open the app in Expo Go, an emulator, or a
-development build. The local AI screen requires a native development build;
+Use a native development build for the local AI screen and Android speech;
 run `npm run android` with an Android SDK and device/emulator available. The
 web target remains available with `npm run web`, but local llama.cpp inference
 is Android-only in this spike.
@@ -229,8 +231,8 @@ shows an actionable error. It never silently falls back to a network recognizer.
 The screen lets the user enter a BCP-47 language tag, defaulting to `en-US`.
 Before each recording, the app checks the device's installed on-device locale
 list and starts only with a matching language. A successful transcript replaces
-the current prompt text; manual prompt entry remains available. Text-to-speech
-and continuous listening are outside this phase.
+the current prompt text; manual prompt entry remains available. Phase 6 adds
+optional speech output after manual submission, described below.
 
 On-device availability depends on the Android version, recognition service, and
 downloaded system language packs:
@@ -263,3 +265,113 @@ that the app gives a clear unavailable-language/device message when the offline
 pack is absent. This repository's development environment has no connected
 Android device, so actual offline recognition remains pending until that phone
 test is performed.
+
+### Native Android TTS & voice conversation (Phase 6)
+
+**Record prompt → Stop and transcribe → review/edit prompt → Generate → listen.**
+The **Speak response** switch is off by default. When enabled, only the completed
+Qwen answer is spoken; the full answer stays visible. **Speak answer again / retry**
+also lets you explicitly replay a visible answer, even with auto-speech off.
+**Stop speaking** cancels playback and any pending automatic speech for the
+current generation. It does not cancel Qwen's computation or erase its answer.
+
+#### Native implementation and voice availability
+
+`frontend/modules/git-out-tts/` is a small Android-only local Expo module wrapping
+`android.speech.tts.TextToSpeech`. Expo autolinks it from `frontend/modules/` in
+development builds. It uses the existing Expo Modules API/New Architecture; no
+new npm runtime dependency or speech-model package is needed. No Whisper,
+Piper, Coqui, or separate TTS model is bundled or downloaded by Git Out.
+
+- Initialization waits for Android `OnInit`, with a 10-second timeout and
+  actionable failure messages. An explicit retry can initialize again after failure.
+- **Check TTS voice** queries the engine's voice list. TTS has its own BCP-47
+  language setting, independent of STT; both default to `en-US`. TTS requires an
+  exact locale match (for example, `en-GB` is not silently replaced by `en-US`).
+- Only voices reporting `isNetworkConnectionRequired == false` and not marked
+  `KEY_FEATURE_NOT_INSTALLED` are eligible. The native bridge rechecks the voice
+  and `isLanguageAvailable` immediately before speaking, checks `setVoice`, and
+  never substitutes a default/network voice. Empty or over-limit text is rejected.
+- Voice metadata is supplied by the installed engine; it is not proof of offline
+  behavior on every phone. Some engines report incomplete or inaccurate data.
+  Missing data and synthesis errors keep the text answer and offer retry.
+- TTS in this app requires Android 8/API 26+ for its audio-focus handling. The full
+  STT → Qwen → TTS flow still requires Android 13/API 33+ for existing STT checks.
+- This feature uses Android's system-selected TTS engine and media audio route.
+  Earphones/Bluetooth output and media volume are controlled by Android. No
+  speaker route is forced. Speech stops on audio focus loss (including transient
+  loss), audio-becoming-noisy events such as headphone removal, and backgrounding.
+
+Voice capabilities are separate: **Local LLM model** shows GGUF load state,
+**Offline speech input** checks Android STT availability/language packs, and
+**Speak response** shows TTS voice availability and playback/error state.
+An STT language pack does not necessarily provide a TTS voice for that language.
+
+#### Cancellation and lifecycle
+
+Native operations run on the main thread. TTS uses stop plus `QUEUE_FLUSH`, and
+JavaScript serializes start/stop commands with request revisions and utterance IDs.
+Old initialization results or playback callbacks cannot start/update a newer
+request. A new generation stops old speech first; rapid duplicate Generate taps
+are ignored until the current local inference finishes. Starting the microphone
+waits for TTS to stop, to avoid recognizing the app's own answer.
+
+Turning speech off, changing the TTS language, pressing Stop, or backgrounding the
+app suppresses pending autoplay. Returning to the app does not resume speech or
+the microphone automatically. STT is cancelled on background/unmount (including
+permission/support checks that are still pending); its on-device checks remain
+in place. TTS releases its engine, focus, listeners, and initialization promises
+on shutdown/module destruction. The LLM context is released after any in-flight
+generation finishes on unmount.
+
+This is a foreground, manually submitted conversation. Continuous listening,
+wake words, automatic reactivation, headset-button control, lock-screen playback,
+and a foreground media service are not implemented. Pocket/locked-screen operation
+is a next-phase goal; locking the screen currently stops speech. Answers longer
+than the engine's `getMaxSpeechInputLength()` limit remain text-only with a clear
+error; there is no token streaming or speech chunk queue.
+
+#### Setup and troubleshooting
+
+Install a new native development build (Expo Go and an older Phase 5 binary do
+not contain `GitOutTts`). With dependencies installed, build using
+`npm run android` from `frontend/` on a machine with a JDK and Android SDK. The
+module manifest supplies the Android 11+ `android.intent.action.TTS_SERVICE`
+package-visibility query. Hand-written module sources are tracked separately
+from the generated `frontend/android/` project. No clean/reset is needed.
+
+If no suitable voice is available, open Android **Settings → Text-to-speech
+output** (location varies by manufacturer), enable/update the preferred engine,
+and use its **Install voice data** settings to install the requested language.
+This user-directed setup may need internet. Return to Git Out, use **Check TTS
+voice**, and retry. A network-only voice is intentionally rejected. For silence,
+check media volume, earphone routing, and whether another app owns audio focus.
+Initialization failure, missing module, unsupported language, and synthesis
+failure appear under TTS while the generated text remains readable.
+
+#### Physical-device/offline verification — pending
+
+Unit tests mock the engine; they do not verify Android initialization, real voice
+data, earphone behavior, or offline speech. Perform these checks on the phone:
+
+1. Build/install the new development app; load the existing Qwen GGUF.
+2. Generate with **Speak response** off; confirm text-only inference still works.
+3. Check an installed TTS language, enable speech, and generate another answer.
+4. Stop midway, replay, and quickly start another request. Confirm no overlapping
+   or delayed stale speech. Start STT during playback and confirm output stops.
+5. Try a missing language/voice; confirm an actionable TTS error and retained text.
+6. Test earphones, disconnect them during speech, and background/return to the app.
+   Speech/input should stop with no automatic restart.
+7. Disable **both Wi-Fi and mobile data**, stop FastAPI/Ollama, and repeat STT,
+   local inference, TTS, stopping, and missing-language tests. Record phone model,
+   Android version, TTS engine/version, language/voice ID, and results.
+8. Verify that missing offline data yields an error, not a network fallback. For
+   additional evidence, inspect traffic from both the app and the installed
+   system speech engine while repeating the tests.
+
+Use a development build with Metro already reachable over USB (`adb reverse`) or
+a locally bundled release build when testing without wireless networking; Metro
+connectivity is distinct from inference/speech connectivity. GitHub fetching and
+initial dependency/model/system-voice downloads require internet. The mobile
+conversation path calls neither FastAPI/Ollama nor cloud speech APIs. Actual
+offline operation remains **unverified on a physical Android device**.
