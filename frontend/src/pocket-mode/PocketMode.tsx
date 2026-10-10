@@ -15,7 +15,8 @@ interface Props {
 }
 
 export function PocketMode({ state, transcript, answer, error, notice = '', onMicrophone, onStop, onExit }: Props) {
-  const waiting = state === 'Thinking' || state === 'Transcribing';
+  const checking = state === 'Checking';
+  const waiting = checking || state === 'Thinking' || state === 'Transcribing';
   const listening = state === 'Listening';
   const speaking = state === 'Speaking';
   const stateTone = state === 'Error' ? 'danger' : state === 'Ready' ? 'neutral' : 'positive';
@@ -38,8 +39,8 @@ export function PocketMode({ state, transcript, answer, error, notice = '', onMi
           style={({ pressed }) => [styles.mic, listening && styles.micListening, waiting && styles.disabled, pressed && !waiting && styles.pressed]}
         >
           <Text style={styles.micGlyph}>{listening ? '■' : '●'}</Text>
-          <Text style={styles.micText}>{listening ? 'Finish speaking' : waiting ? 'Working locally…' : 'Tap to speak'}</Text>
-          <Text style={styles.micHint}>{listening ? 'Your answer will be submitted once' : speaking ? 'Speaking your last answer' : 'Foreground microphone only'}</Text>
+          <Text style={styles.micText}>{listening ? 'Finish speaking' : checking ? 'Starting microphone…' : waiting ? 'Working locally…' : state === 'Error' ? 'Tap to retry' : 'Tap to speak'}</Text>
+          <Text style={styles.micHint}>{listening ? 'Speak now. Your question will be submitted once' : checking ? 'Allow microphone access if prompted' : speaking ? 'Speaking your last answer' : 'Foreground microphone only'}</Text>
         </Pressable>
 
         <View style={styles.actions}>
@@ -65,6 +66,7 @@ export function PocketMode({ state, transcript, answer, error, notice = '', onMi
 
 function stateDescription(state: PocketState) {
   switch (state) {
+    case 'Checking': return 'Preparing speech input';
     case 'Listening': return 'Listening for your thought';
     case 'Transcribing': return 'Transcribing on device';
     case 'Thinking': return 'Thinking with local Qwen';

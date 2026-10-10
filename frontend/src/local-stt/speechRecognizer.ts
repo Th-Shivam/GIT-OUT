@@ -42,6 +42,10 @@ export class AndroidSpeechRecognizer {
     private readonly platform: SpeechPlatform,
   ) {}
 
+  protected requestMicrophonePermission() {
+    return this.module.requestMicrophonePermissionsAsync();
+  }
+
   async checkAvailability(language: string): Promise<SpeechAvailability> {
     if (this.platform.os !== 'android') {
       throw new NativeSpeechError(
@@ -102,6 +106,7 @@ export class AndroidSpeechRecognizer {
     language: string,
     onPartialResult?: (transcript: string) => void,
     isCancelled: () => boolean = () => false,
+    onListening?: () => void,
   ): Promise<SpeechRecognitionSession> {
     if (this.activeSession) {
       throw new NativeSpeechError(
@@ -114,7 +119,7 @@ export class AndroidSpeechRecognizer {
       if (isCancelled()) throw new NativeSpeechError('ABORTED', 'Speech input was cancelled. Return to Git Out and tap Record prompt again.');
     };
     checkCancelled();
-    const permission = await this.module.requestMicrophonePermissionsAsync();
+    const permission = await this.requestMicrophonePermission();
     checkCancelled();
     if (!permission.granted) {
       throw new NativeSpeechError(
@@ -172,6 +177,9 @@ export class AndroidSpeechRecognizer {
     this.activeSession = session;
 
     subscriptions = [
+      this.module.addListener('start', () => {
+        if (!settled && !isCancelled()) onListening?.();
+      }),
       this.module.addListener('result', (event) => {
         const transcript = event.results[0]?.transcript?.trim() ?? '';
         if (!transcript) return;
@@ -181,6 +189,10 @@ export class AndroidSpeechRecognizer {
         }
       }),
       this.module.addListener('error', (event) => {
+        if (event.error === 'no-speech' || event.error === 'speech-timeout') {
+          rejectSession(new NativeSpeechError('NO_SPEECH', 'No speech was detected. Tap to speak and begin after the microphone is ready. Check that the microphone is enabled in Android settings.'));
+          return;
+        }
         const code =
           event.error === 'not-allowed'
             ? 'MICROPHONE_PERMISSION_DENIED'
@@ -193,7 +205,7 @@ export class AndroidSpeechRecognizer {
                   : event.error === 'service-not-allowed'
                     ? 'ON_DEVICE_UNAVAILABLE'
                     : 'RECOGNITION_FAILED';
-        rejectSession(new NativeSpeechError(code, event.message));
+        rejectSession(new NativeSpeechError(code, event.message?.trim() || `Speech recognition failed (${event.error}). Check microphone access and the installed offline speech language, then retry.`));
       }),
       this.module.addListener('end', () => {
         rejectSession(

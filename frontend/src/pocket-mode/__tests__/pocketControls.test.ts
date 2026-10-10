@@ -3,15 +3,15 @@ import { pocketAction, pocketState, PocketCommandGate, type PocketState } from '
 
 describe('Pocket controls', () => {
   it('represents a full one-shot voice turn and recovery', () => {
-    const idle = { listening: false, transcribing: false, thinking: false, speaking: false, error: '' };
-    const states = [idle, { ...idle, listening: true }, { ...idle, transcribing: true },
+    const idle = { checking: false, listening: false, transcribing: false, thinking: false, speaking: false, error: '' };
+    const states = [idle, { ...idle, checking: true }, { ...idle, listening: true }, { ...idle, transcribing: true },
       { ...idle, thinking: true }, { ...idle, speaking: true }, idle,
       { ...idle, error: 'Install voice data' }, idle];
-    expect(states.map(pocketState)).toEqual(['Ready', 'Listening', 'Transcribing', 'Thinking', 'Speaking', 'Ready', 'Error', 'Ready']);
+    expect(states.map(pocketState)).toEqual(['Ready', 'Checking', 'Listening', 'Transcribing', 'Thinking', 'Speaking', 'Ready', 'Error', 'Ready']);
   });
 
   it.each<[PocketState, string]>([
-    ['Ready', 'record'], ['Error', 'record'], ['Listening', 'finish'],
+    ['Ready', 'record'], ['Error', 'record'], ['Checking', 'none'], ['Listening', 'finish'],
     ['Transcribing', 'none'], ['Thinking', 'none'], ['Speaking', 'stop'],
   ])('maps toggle in %s to %s', (state, result) => {
     expect(pocketAction('toggle', state, true)).toBe(result);

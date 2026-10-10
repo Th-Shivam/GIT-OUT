@@ -1,8 +1,9 @@
-export type PocketState = 'Ready' | 'Listening' | 'Transcribing' | 'Thinking' | 'Speaking' | 'Error';
+export type PocketState = 'Ready' | 'Checking' | 'Listening' | 'Transcribing' | 'Thinking' | 'Speaking' | 'Error';
 export type MediaAction = 'play' | 'pause' | 'toggle' | 'stop' | 'interrupt';
 export type PocketAction = 'record' | 'finish' | 'stop' | 'none';
 
 export interface PocketStatus {
+  checking: boolean;
   listening: boolean;
   transcribing: boolean;
   thinking: boolean;
@@ -13,6 +14,7 @@ export interface PocketStatus {
 export function pocketState(status: PocketStatus): PocketState {
   if (status.listening) return 'Listening';
   if (status.transcribing) return 'Transcribing';
+  if (status.checking) return 'Checking';
   if (status.thinking) return 'Thinking';
   if (status.speaking) return 'Speaking';
   return status.error ? 'Error' : 'Ready';
@@ -24,7 +26,7 @@ export function pocketAction(action: MediaAction, state: PocketState, foreground
   if (state === 'Speaking') return action === 'play' ? 'none' : 'stop';
   if (!foreground) return 'none';
   if (state === 'Listening') return action === 'play' ? 'none' : 'finish';
-  if (state === 'Thinking' || state === 'Transcribing' || action === 'pause') return 'none';
+  if (state === 'Checking' || state === 'Thinking' || state === 'Transcribing' || action === 'pause') return 'none';
   return 'record';
 }
 

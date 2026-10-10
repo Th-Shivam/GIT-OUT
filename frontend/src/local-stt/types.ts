@@ -47,7 +47,7 @@ export interface SpeechRecognitionModule {
     event: 'error',
     listener: (event: SpeechRecognitionErrorEvent) => void,
   ): SpeechRecognitionSubscription;
-  addListener(event: 'end', listener: () => void): SpeechRecognitionSubscription;
+  addListener(event: 'start' | 'end', listener: () => void): SpeechRecognitionSubscription;
   start(options: {
     lang: string;
     interimResults: boolean;

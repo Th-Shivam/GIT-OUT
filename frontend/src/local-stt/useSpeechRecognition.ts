@@ -21,10 +21,11 @@ export function useSpeechRecognition() {
       try {
         const session = await recognizer.start(language, (text) => {
           if (!isCancelled()) setPartialTranscript(text);
-        }, isCancelled);
+        }, isCancelled, () => {
+          if (!isCancelled()) setState('listening');
+        });
         sessionRef.current = session;
         if (isCancelled()) session.cancel();
-        else setState('listening');
         return await session.promise;
       } finally {
         if (request === requestRef.current) sessionRef.current = null;
@@ -58,7 +59,7 @@ export function useSpeechRecognition() {
       sessionRef.current = null;
     };
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') return;
+      if (state === 'active' || recognizer.isRequestingPermission()) return;
       cancel();
       setState('idle');
       setPartialTranscript('');
@@ -68,13 +69,14 @@ export function useSpeechRecognition() {
       subscription.remove();
       cancel();
     };
-  }, []);
+  }, [recognizer]);
 
   return {
     isChecking: state === 'checking',
     isRecording: state === 'listening',
     isTranscribing: state === 'transcribing',
     partialTranscript,
+    isRequestingPermission: recognizer.isRequestingPermission,
     startRecognition,
     stopRecognition,
     cancelRecognition,

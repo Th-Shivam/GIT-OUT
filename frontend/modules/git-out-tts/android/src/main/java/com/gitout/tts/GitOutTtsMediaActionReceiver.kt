@@ -14,15 +14,20 @@ class GitOutTtsMediaActionReceiver : BroadcastReceiver() {
       GitOutTtsPlaybackService.ACTION_STOP -> KeyEvent.KEYCODE_MEDIA_STOP
       else -> return
     }
-    val session = GitOutTtsMediaSession.current ?: return
+    val controller = GitOutTtsMediaSession.current?.controller ?: return
     val down = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
     val up = KeyEvent(KeyEvent.ACTION_UP, keyCode)
-    session.dispatchMediaButtonEvent(
-      Intent(Intent.ACTION_MEDIA_BUTTON).putExtra(Intent.EXTRA_KEY_EVENT, down),
-    )
-    session.dispatchMediaButtonEvent(
-      Intent(Intent.ACTION_MEDIA_BUTTON).putExtra(Intent.EXTRA_KEY_EVENT, up),
-    )
+    // MediaSession owns the callback, but media-button dispatch is exposed by
+    // its controller. Reuse that controller so notification actions and
+    // headset events follow the same native callback path without creating a
+    // second session or opening the microphone.
+    try {
+      controller.dispatchMediaButtonEvent(down)
+      controller.dispatchMediaButtonEvent(up)
+    } catch (_: IllegalStateException) {
+      // The module may be releasing the session at the same time as a stale
+      // notification broadcast. There is no active session to handle it.
+    }
   }
 }
 

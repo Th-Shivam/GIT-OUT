@@ -45,6 +45,7 @@ export default function App() {
     isRecording,
     isTranscribing,
     partialTranscript,
+    isRequestingPermission,
     startRecognition,
     stopRecognition,
     cancelRecognition,
@@ -79,8 +80,9 @@ export default function App() {
   const selectedTTSVoice = speechOutput.voice?.language.toLowerCase() === ttsLanguage.trim().replace(/_/g, '-').toLowerCase()
     ? speechOutput.voice : null;
   const currentPocketState = pocketState({
+    checking: isChecking || (startingMic && !isRecording && !isTranscribing),
     listening: isRecording,
-    transcribing: isTranscribing || (!isRecording && startingMic),
+    transcribing: isTranscribing,
     thinking: generating,
     speaking: ttsActive,
     error: error || inferenceError || speechOutput.error,
@@ -93,7 +95,7 @@ export default function App() {
     conversation.setForeground(AppState.currentState === 'active');
     void findStoredModel().then((stored) => { if (mountedRef.current) setModel(stored); });
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') ++turnRef.current;
+      if (state !== 'active' && !isRequestingPermission()) ++turnRef.current;
       conversation.setForeground(state === 'active');
     });
     return () => {
@@ -104,7 +106,7 @@ export default function App() {
         if (!mountedRef.current && lifecycleRef.current === lifecycle) return localAI.unloadModel();
       }).catch(() => undefined);
     };
-  }, [localAI, conversation]);
+  }, [localAI, conversation, isRequestingPermission]);
 
   const runAction = async (action: () => Promise<void>) => {
     if (actionRef.current || microphoneRef.current || conversation.getSnapshot().generating) return;
