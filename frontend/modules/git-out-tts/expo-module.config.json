@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["com.gitout.tts.GitOutTtsModule"]
+  }
+}
