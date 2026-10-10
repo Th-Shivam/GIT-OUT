@@ -29,6 +29,8 @@ import {
 import { LocalTTS } from './src/local-tts/localTTS';
 import { NativeTTSEngine } from './src/local-tts/nativeTTSEngine';
 import { VoiceConversation } from './src/voice-conversation/voiceConversation';
+import { PocketMode } from './src/pocket-mode/PocketMode';
+import { pocketState } from './src/pocket-mode/pocketControls';
 
 export default function App() {
   const localAI = useMemo(() => new LocalAI(new LlamaRNEngine()), []);
@@ -40,9 +42,11 @@ export default function App() {
   const {
     isChecking,
     isRecording,
+    isTranscribing,
     partialTranscript,
     startRecognition,
     stopRecognition,
+    cancelRecognition,
   } = useSpeechRecognition();
   const [model, setModel] = useState<StoredModel | null>(null);
   const [modelLoaded, setModelLoaded] = useState(false);
@@ -57,8 +61,12 @@ export default function App() {
   const mountedRef = useRef(true);
   const lifecycleRef = useRef(0);
   const [startingMic, setStartingMic] = useState(false);
+  const [pocketEnabled, setPocketEnabled] = useState(false);
+  const pocketRef = useRef(false);
+  const turnRef = useRef(0);
+  const previousSpeakRef = useRef(false);
   const working = busy || generating;
-  const microphoneBusy = startingMic || isChecking || isRecording;
+  const microphoneBusy = startingMic || isChecking || isRecording || isTranscribing;
   const ttsActive = speechOutput.state === 'preparing' || speechOutput.state === 'speaking';
   const selectedTTSVoice = speechOutput.voice?.language.toLowerCase() === ttsLanguage.trim().replace(/_/g, '-').toLowerCase()
     ? speechOutput.voice : null;
@@ -70,6 +78,7 @@ export default function App() {
     conversation.setForeground(AppState.currentState === 'active');
     void findStoredModel().then((stored) => { if (mountedRef.current) setModel(stored); });
     const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') ++turnRef.current;
       conversation.setForeground(state === 'active');
     });
     return () => {
@@ -150,6 +159,8 @@ export default function App() {
 
     if (microphoneRef.current || actionRef.current || conversation.getSnapshot().generating) return;
     microphoneRef.current = true;
+    const turn = ++turnRef.current;
+    const submitOnFinal = pocketRef.current;
     setStartingMic(true);
 
     setError('');
@@ -157,17 +168,18 @@ export default function App() {
     // Wait until output stops before opening the mic, so TTS isn't transcribed.
     void conversation.stopSpeaking()
       .then(() => {
-        if (!mountedRef.current || AppState.currentState !== 'active') throw new Error('Return to Git Out and tap Record prompt again.');
+        if (turn !== turnRef.current || !mountedRef.current || AppState.currentState !== 'active') throw new Error('Return to Git Out and tap Record prompt again.');
         return startRecognition(speechLanguage.trim());
       })
       .then((nextTranscript) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || turn !== turnRef.current) return;
         const promptText = transcriptForPrompt(nextTranscript);
         setTranscript(promptText);
         setPrompt(promptText);
+        if (submitOnFinal && pocketRef.current) void conversation.generate(promptText);
       })
       .catch((actionError) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || turn !== turnRef.current) return;
         setError(
           actionError instanceof NativeSpeechError
             ? actionError.message
@@ -181,9 +193,40 @@ export default function App() {
       });
   };
 
+  const stopPocket = () => {
+    ++turnRef.current;
+    cancelRecognition();
+    void conversation.stopSpeaking().catch(() => undefined);
+  };
+
+  const exitPocket = () => {
+    stopPocket();
+    pocketRef.current = false;
+    setPocketEnabled(false);
+    conversation.setSpeakResponse(previousSpeakRef.current);
+  };
+
+  if (pocketEnabled) {
+    return <PocketMode
+      state={pocketState({
+        listening: isRecording,
+        transcribing: isTranscribing || (!isRecording && startingMic),
+        thinking: generating,
+        speaking: ttsActive,
+        error: error || inferenceError || speechOutput.error,
+      })}
+      transcript={partialTranscript || transcript}
+      answer={response}
+      error={error || inferenceError || speechOutput.error}
+      onMicrophone={recordOrTranscribe}
+      onStop={stopPocket}
+      onExit={exitPocket}
+    />;
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.eyebrow}>GIT OUT · PHASE 6</Text>
+      <Text style={styles.eyebrow}>GIT OUT · PHASE 7</Text>
       <Text style={styles.title}>Local AI</Text>
       <Text style={styles.subtitle}>
         A small Android-first proof that inference can happen on the device.
@@ -212,6 +255,19 @@ export default function App() {
           />
         </View>
       </View>
+
+      <ActionButton
+        label="Enter Pocket Mode"
+        disabled={!modelLoaded || working || microphoneBusy}
+        onPress={() => {
+          if (actionRef.current || microphoneRef.current || conversation.getSnapshot().generating) return;
+          previousSpeakRef.current = conversation.getSnapshot().speakResponse;
+          conversation.setSpeakResponse(true);
+          setError('');
+          pocketRef.current = true;
+          setPocketEnabled(true);
+        }}
+      />
 
       <View style={styles.card}>
         <View style={styles.row}>

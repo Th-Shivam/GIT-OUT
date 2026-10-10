@@ -9,7 +9,7 @@ export function useSpeechRecognition() {
   const sessionRef = useRef<SpeechRecognitionSession | null>(null);
   const requestRef = useRef(0);
   const mountedRef = useRef(true);
-  const [state, setState] = useState<'idle' | 'checking' | 'listening'>('idle');
+  const [state, setState] = useState<'idle' | 'checking' | 'listening' | 'transcribing'>('idle');
   const [partialTranscript, setPartialTranscript] = useState('');
 
   const startRecognition = useCallback(
@@ -38,7 +38,16 @@ export function useSpeechRecognition() {
   );
 
   const stopRecognition = useCallback(() => {
+    setState('transcribing');
     sessionRef.current?.stop();
+  }, []);
+
+  const cancelRecognition = useCallback(() => {
+    ++requestRef.current;
+    sessionRef.current?.cancel();
+    sessionRef.current = null;
+    setState('idle');
+    setPartialTranscript('');
   }, []);
 
   useEffect(() => {
@@ -64,8 +73,10 @@ export function useSpeechRecognition() {
   return {
     isChecking: state === 'checking',
     isRecording: state === 'listening',
+    isTranscribing: state === 'transcribing',
     partialTranscript,
     startRecognition,
     stopRecognition,
+    cancelRecognition,
   };
 }
