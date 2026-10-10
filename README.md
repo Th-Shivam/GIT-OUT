@@ -1,75 +1,178 @@
 # Git Out
 
-Git Out is a voice-first AI companion that helps developers discuss GitHub
-work, review code, and practice technical conversations while walking.
+Git Out is a local-first voice companion for developers. It helps you think
+through Git workflows, code-review concepts, and implementation plans while
+you are away from a desk. The core conversation stays on the Android device:
+native on-device speech recognition feeds a local Qwen model, and an installed
+Android voice can read the completed answer aloud.
 
-## Current architecture
+## Problem and product direction
 
-- `frontend/` — React Native + Expo + TypeScript mobile client with an
-  Android-first local LLM, native speech input, and native speech output.
-- `backend/` — Python + FastAPI service with async MongoDB connectivity, a
-  database-aware health endpoint, GitHub REST integration, and a local AI
-  runtime integration.
-- `docs/` — Project documentation.
-- `scripts/` — Small development and automation scripts.
+Developer tools often require a screen, a network connection, and several
+context switches. Git Out provides a focused walking workflow:
 
-The current request paths are:
+1. Speak one question.
+2. Review the final on-device transcript.
+3. Generate with the local Qwen GGUF model.
+4. Read the answer or listen through an installed Android TTS voice.
+
+GitHub context is an optional, separate connected workspace. It is never
+required for local conversation and its server-side token is never shipped to
+the mobile app.
+
+## Features
+
+### Local conversation
+
+- Android-first `llama.rn` inference with
+  `Qwen2.5-1.5B-Instruct Q4_K_M GGUF`.
+- Manual text prompts remain available when speech is unavailable.
+- Prompt shortcuts for pull requests, refactors, and Git workflows.
+- Readable response history with copy and native TTS replay actions.
+- Text answers remain visible when voice synthesis fails.
+
+### Pocket Mode
+
+- Large, high-contrast controls for walking use.
+- Explicit `Ready`, `Listening`, `Transcribing`, `Thinking`, `Speaking`, and
+  `Error` states.
+- One-shot voice turns: one recording produces one transcript and one local
+  generation request.
+- Stop/cancel and exit controls invalidate stale recognition callbacks and
+  pending automatic speech.
+- No wake word, continuous microphone session, or automatic microphone restart.
+
+### Native Android voice path
+
+- `expo-speech-recognition` with explicit on-device recognition checks.
+- Installed STT language verification before the microphone opens.
+- Small local Expo module around Android `TextToSpeech`.
+- Exact installed, non-network TTS voice matching; no silent locale fallback.
+- Android audio focus and headphone-disconnect handling.
+- Framework `MediaSession` controls for supported headset, lock-screen, and
+  notification surfaces.
+- A minimal `mediaPlayback` foreground service is used only while an already-
+  started answer is being spoken. It never starts the microphone.
+- Backgrounding preserves an utterance that has already started while
+  suppressing new background autoplay and recognition.
+
+### GitHub workspace
+
+The GitHub tab is read-only and uses the existing FastAPI service:
+
+- authenticated account status;
+- recently updated repositories;
+- assigned open issues;
+- open pull requests and recent commits per repository.
+
+The backend validates and whitelists response fields before returning them to
+the mobile client. GitHub data is not used as a hidden fallback for local AI.
+
+## UI overview
+
+The mobile app uses a dark, developer-focused surface system inspired by code
+hosting tools without copying their branding or screens:
+
+- **Home** — quick Pocket Mode access, model readiness, the local loop, and the
+  latest answer;
+- **Chat** — text generation, developer prompt shortcuts, response history,
+  copy, and replay;
+- **GitHub** — connected-account status and repository context;
+- **Settings** — GGUF loading, STT language packs, TTS voice checks, privacy,
+  and connectivity guidance.
+
+The UI uses reusable surface, button, status-pill, field, empty-state, and tab
+components. Touch targets are intentionally large, disabled states are
+visible, and the microphone is never represented as silently available in the
+background.
+
+## Architecture
 
 ```text
-React Native / Expo → FastAPI
-                         ├── MongoDB
-                         ├── GitHub API
-                         └── Ollama (local AI)
-
-React Native / Expo → llama.rn → local GGUF model
-
-React Native / Expo → Android SpeechRecognizer → on-device system speech model
-
-Native Android STT → editable prompt → manual Generate → local Qwen/llama.rn
-    → final text answer → Android TextToSpeech → installed non-network voice
+Android native development build
+        │
+        ├── Pocket Mode / Chat / Settings UI
+        │       │
+        │       ├── expo-speech-recognition
+        │       │       └── local transcript → LocalAI → final answer
+        │       │                                  │
+        │       │                                  └── GitOutTts Expo module
+        │       │                                      ├── TextToSpeech
+        │       │                                      ├── AudioFocus
+        │       │                                      ├── MediaSession
+        │       │                                      └── scoped mediaPlayback service
+        │       │
+        │       └── optional fetch → FastAPI → GitHub REST API
+        │
+        └── llama.rn → local Qwen GGUF
 ```
 
-The initial foundation uses REST between the mobile client and API. GitHub
-calls follow route → service → async HTTP client → GitHub API, without storing
-GitHub data in MongoDB. Authentication, realtime voice, and AI model
-integrations will be added in later phases. The mobile speech path uses
-Android's native on-device recognizer and TextToSpeech engine, with local Qwen
-inference through `llama.rn`.
+The backend also retains its independent local Ollama development endpoint at
+`POST /ai/chat`. The mobile local inference path does not call that endpoint.
 
-## Technology stack
+### Repository layout
 
-- React Native, Expo, and TypeScript
-- Python and FastAPI
-- MongoDB with PyMongo's async driver
-- GitHub REST API integration
-- Open-weight AI through a local Ollama runtime
-
-## Development setup
-
-Copy the service environment templates before adding local configuration:
-
-```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
+```text
+frontend/
+  App.tsx                         app orchestration and navigation
+  src/ui/                         reusable dark design system
+  src/home/                       Home surface
+  src/chat/                       local conversation surface
+  src/github/                     GitHub client and browse surface
+  src/settings/                   device/model settings surface
+  src/pocket-mode/                one-shot voice UI and media action policy
+  src/local-ai/                   llama.rn and model storage abstraction
+  src/local-stt/                  native on-device STT abstraction
+  src/local-tts/                  serialized TTS controller and adapter
+  modules/git-out-tts/            handwritten native Android Expo module
+backend/
+  app/github/                     authenticated GitHub REST client/service
+  app/api/routes/github.py        safe GitHub read endpoints
+  app/ai/                         independent local Ollama endpoint
 ```
 
-The root `.env.example` lists the project-wide configuration planned for later
-phases. The templates contain no secrets. Keep local `.env` files uncommitted.
+## Technology and prerequisites
 
-### Frontend
+### Required for the mobile development build
+
+- Node.js and npm;
+- JDK 17;
+- Android SDK Platform 36;
+- Android Build Tools 36.0.0;
+- Android NDK `27.1.12297006`;
+- Gradle wrapper supplied by `frontend/android`;
+- Android 13/API 33 or newer for Git Out's explicit on-device STT path;
+- Android 8/API 26 or newer for the native TTS audio-focus path;
+- an Android phone or emulator with an available local model memory budget.
+
+The native app is configured for `arm64-v8a` and `x86_64`. A physical phone is
+recommended because speech services, TTS voice packs, headset buttons, and
+lock-screen behavior vary by manufacturer.
+
+### Backend development
+
+- Python 3.11 or newer;
+- a virtual environment;
+- MongoDB if database-backed health status is needed;
+- a GitHub token only if the GitHub tab is used;
+- Ollama only if the independent backend `/ai/chat` route is used.
+
+## Setup
+
+### 1. Install project dependencies
 
 ```bash
+git clone <repository-url>
+cd Git-out
 cd frontend
 npm install
-npm start
 ```
 
-Use a native development build for the local AI screen and Android speech;
-run `npm run android` with an Android SDK and device/emulator available. The
-web target remains available with `npm run web`, but local llama.cpp inference
-is Android-only in this spike.
+The tracked local Expo module is autolinked from `frontend/modules/`. No
+Whisper, Piper, Coqui, cloud speech SDK, or separate speech-model package is
+installed.
 
-### Backend
+### 2. Configure the backend (optional for local conversation)
 
 ```bash
 cd backend
@@ -77,301 +180,254 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
+```
+
+Set `GITHUB_TOKEN` in `backend/.env` for the GitHub tab. Keep it empty if that
+feature is not needed. The token is read only by FastAPI and is never placed in
+`frontend/.env` or bundled into the app.
+
+Relevant backend variables:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `MONGODB_URI` | health/database connection | `mongodb://localhost:27017` |
+| `MONGODB_DATABASE` | database name | `git_out` |
+| `GITHUB_TOKEN` | server-only GitHub credential | empty |
+| `GITHUB_API_BASE_URL` | GitHub API endpoint | `https://api.github.com` |
+| `GITHUB_TIMEOUT_SECONDS` | GitHub request timeout | `10` |
+| `OLLAMA_BASE_URL` | independent backend AI runtime | `http://localhost:11434` |
+| `OLLAMA_MODEL` | independent backend model | `qwen3:4b` |
+
+Start the service with:
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-Git Out expects a MongoDB instance at the `MONGODB_URI` configured in
-`backend/.env`. The API starts if MongoDB is unavailable, but reports a
-degraded state until the database can be reached. Add a GitHub Personal
-Access Token to `GITHUB_TOKEN` for GitHub API requests. Keep the token local
-and never commit it.
-
-The API is available at `http://localhost:8000`; its health check is
-`GET /health`. Run backend tests with:
+### 3. Configure the mobile API URL (optional)
 
 ```bash
+cd frontend
+cp .env.example .env
+```
+
+Set `EXPO_PUBLIC_API_URL` to a URL reachable by the Android device. On a real
+phone, `http://localhost:8000` refers to the phone, not the development
+computer; use the computer's LAN address or `adb reverse` for a development
+build. This URL is used for GitHub browsing only.
+
+### 4. Acquire and load the local model
+
+Download the `Qwen2.5-1.5B-Instruct Q4_K_M GGUF` file from the official Qwen
+GGUF repository. Git Out does not bundle or automatically download weights.
+
+1. Put the `.gguf` file in the Android device's `Download` folder.
+2. Open **Settings** in Git Out.
+3. Choose **Choose GGUF**.
+4. Load the model and wait for the device-local load to finish.
+
+Model files and `*.gguf` files are ignored by Git. Plan for roughly 2 GiB or
+more of free app memory; actual usage depends on the phone and context size.
+
+## Build and run Android
+
+Generate/update the native project without cleaning user files:
+
+```bash
+cd frontend
+npx expo prebuild --platform android
+npm run android
+```
+
+The generated `frontend/android/` project is ignored. Do not use
+`expo prebuild --clean` for this project because it can remove local native
+work. For a direct debug APK build:
+
+```bash
+cd frontend/android
+./gradlew :app:assembleDebug --console=plain --max-workers=2
+```
+
+Install the resulting debug APK with Android Studio or:
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+The final device build must include the handwritten `GitOutTts` module. Expo
+Go and an older development binary do not contain it.
+
+## Native speech limitations and permissions
+
+### Speech input
+
+Git Out requests Android's explicit on-device recognizer and checks the
+installed locale list before recording. It does not use
+`EXTRA_PREFER_OFFLINE`, because that hint can be ignored by a recognizer.
+
+- Android 13/API 33+ is required by the selected native support query.
+- The requested BCP-47 language pack must be installed in Android's on-device
+  speech settings.
+- Microphone permission is requested by the speech-recognition config.
+- Permission denial, missing packs, unsupported devices, and cancellation are
+  shown as actionable errors.
+- A background transition cancels a pending or active recognition session.
+
+### Speech output
+
+The local module uses Android's installed `TextToSpeech` engine:
+
+- Android 8/API 26+ is required for the configured audio-focus path;
+- the selected TTS locale must exactly match an installed non-network voice;
+- missing voice data, network-only voices, and text over the Android input limit
+  are rejected without erasing the answer;
+- audio focus loss, transient interruptions, and headphone removal stop speech;
+- a media session and notification exist only around active Pocket playback;
+- denying notification permission may remove notification controls, while the
+  text answer remains available;
+- an utterance already started may finish after the app is backgrounded;
+  returning to the app does not restart it;
+- no automatic microphone activation occurs from the background.
+
+Headset behavior is device and manufacturer dependent. Git Out handles standard
+Android media-session events and keeps large in-app controls as the reliable
+fallback. It does not claim universal Bluetooth-button behavior.
+
+## Offline and connected behavior
+
+| Capability | Network required during use? | Notes |
+| --- | --- | --- |
+| Local Qwen conversation | No | Model must already be stored and loaded |
+| Android on-device STT | No | Installed system language pack required |
+| Android installed TTS | No for eligible voice | Voice data must already be installed |
+| GitHub tab | Yes | FastAPI and GitHub API/token are required |
+| Backend `/ai/chat` | Depends on local Ollama setup | Separate development path, not mobile inference |
+| Initial npm/model/voice downloads | Usually yes | Setup-time operations only |
+
+## Verification commands
+
+Run checks from `frontend/`:
+
+```bash
+npm run typecheck
+npm test
+npx expo config --type public
+npx expo export --platform android
+```
+
+Run backend checks from `backend/`:
+
+```bash
+python -m compileall -q app tests
 pytest
 ```
 
-The default test suite covers the unavailable-database path. The MongoDB
-integration check runs against the configured URI and is skipped when no
-MongoDB instance is available.
-
-The GitHub integration can be checked with `GET /github/me` when a real token
-is configured. The response contains only the authenticated user's login,
-name, avatar URL, and public repository count. Live GitHub testing requires a
-real local token; automated tests use mocked GitHub responses.
+Also check the exact changes before committing:
 
 ```bash
-curl http://localhost:8000/github/me
+git diff --check
+git status --short
 ```
 
-`GITHUB_API_BASE_URL` defaults to `https://api.github.com` and
-`GITHUB_TIMEOUT_SECONDS` defaults to 10. The token belongs to the backend's
-configured GitHub account; this phase does not add OAuth or per-user login.
-The service also supports paginated repositories, assigned issues (excluding
-PRs), repository pull requests, and repository commits. These methods fetch
-one page per call; only the profile route is exposed in this phase.
+The automated frontend tests cover local AI guards, STT language/prompt
+behavior, TTS voice selection and cancellation, voice-conversation lifecycle,
+Pocket state transitions, and duplicate media-command gating. They do not
+replace a real Android build or phone test.
 
-GitHub error responses use stable, sanitized messages:
+## Physical-device acceptance checklist
 
-| Condition | API HTTP status |
-| --- | --- |
-| Missing, empty, or rejected token / GitHub 401 | 401 |
-| GitHub 403 (permissions or rate limit) | 403 |
-| GitHub 404, other unexpected status, or malformed response | 502 |
-| GitHub 429, 5xx, timeout, or network failure | 503 |
+1. Build a fresh native development APK containing `GitOutTts`.
+2. Install a Qwen GGUF and load it with Wi-Fi and mobile data disabled.
+3. Generate a text answer with speech disabled.
+4. Enable an installed exact-match TTS voice and generate again.
+5. Stop midway, replay, and quickly submit another prompt; confirm no stale or
+   overlapping speech.
+6. Enter Pocket Mode and verify `Ready → Listening → Transcribing → Thinking →
+   Speaking` for one voice turn.
+7. Tap Stop during recognition, inference, and TTS; confirm the next turn is
+   not submitted accidentally.
+8. Background and lock the phone after speech starts; confirm the answer can
+   finish and the media notification appears when permission allows it.
+9. Use play/pause/stop on the notification and a connected headset. Verify the
+   in-app fallback on devices that do not deliver the expected events.
+10. Remove earphones during speech and confirm audio stops safely.
+11. Deny microphone and notification permissions and verify readable errors and
+    retained text.
+12. Remove the requested STT/TTS language pack and verify Git Out refuses a
+    network fallback.
+13. Configure the backend token and test GitHub account, repositories, issues,
+    pull requests, and commits. Confirm the token never appears in device logs
+    or responses.
 
-### Local open-source AI
+Record the phone model, Android version, TTS engine/version, installed locale,
+and results for the submission notes. Physical-device verification is a
+separate step from unit tests and Metro connectivity.
 
-Git Out uses Ollama as a replaceable local HTTP runtime for the first AI
-integration. The default model is `qwen3:4b`, a small open-weight instruct
-model selected for practical local development. Local inference supports
-privacy-conscious experimentation and reduces dependence on proprietary AI
-APIs, while keeping the model boundary replaceable and supporting open
-innovation. GitHub access still requires network connectivity.
+## Troubleshooting
 
-Install Ollama from the [official download page](https://ollama.com/download),
-then run the local server and pull the configured model:
+### Native module missing
+
+Build and install a new development binary after native module changes. Expo Go
+and an old APK cannot load `GitOutTts`. Confirm the module appears in the
+autolinking output and that `frontend/modules/git-out-tts/` is present.
+
+### Gradle cannot find the NDK
+
+Install the exact configured components with Android `sdkmanager`:
 
 ```bash
-# Keep this process running in one terminal.
-ollama serve
-
-# Run this in another terminal.
-ollama pull qwen3:4b
+sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
 ```
 
-With the backend running, send a non-streaming request to:
+Use JDK 17 and ensure `ANDROID_HOME` points to the writable SDK used by Gradle.
 
-```bash
-curl -X POST http://localhost:8000/ai/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"Give me a one sentence explanation of Git."}'
-```
+### STT is unavailable
 
-Live AI requests require Ollama and the configured model to be available.
-Automated tests mock the Ollama HTTP API and do not download or require a
-model.
+Grant microphone permission, use Android 13 or newer, install the requested
+on-device speech language pack, and retry. Git Out intentionally stops instead
+of switching to network recognition.
 
-### Mobile Local AI
+### TTS is unavailable or silent
 
-The mobile path is independent of FastAPI, Ollama, and `/ai/chat`:
+Open Android **Settings → Text-to-speech output**, enable/update the preferred
+engine, install the exact requested language voice, raise media volume, and
+retry **Check voice**. Network-required voices are intentionally rejected.
 
-```text
-React Native
-    ↓
-LocalAI interface
-    ↓
-llama.rn 0.12.9 (llama.cpp)
-    ↓
-Qwen2.5-1.5B-Instruct Q4_K_M GGUF
-```
+### GitHub tab cannot connect
 
-The selected model is [Qwen2.5-1.5B-Instruct Q4_K_M GGUF](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/qwen2.5-1.5b-instruct-q4_k_m.gguf):
+Start FastAPI, set `GITHUB_TOKEN` only in `backend/.env`, and set
+`EXPO_PUBLIC_API_URL` to a device-reachable backend URL. A 401 means the token
+is missing or rejected; a 403 usually means permissions or rate limiting; a
+503 means the service or upstream is unavailable.
 
-- 1.54B parameters
-- Q4_K_M quantization
-- 1,117,320,736 bytes (about 1.04 GiB)
-- Apache-2.0 license
-- Plan for roughly 2 GiB or more of free app memory; actual use depends on
-  device, Android version, context size, and runtime allocation.
+## Submission demonstration script
 
-The app does not bundle or download model weights. Download the model during
-development using the linked model page, place the `.gguf` file in the Android
-device's `Download` folder, then use **Choose GGUF** in the local AI screen.
-The app copies the selected file into its private `models/` directory. Local
-model files and `*.gguf` files are ignored by Git.
+1. Open Git Out on the Android development build and show the dark Home screen.
+2. Open Settings, choose the Qwen GGUF, and load it locally.
+3. Open Chat, use **Explain a pull request**, generate, copy, and replay the
+   answer.
+4. Enter Pocket Mode, tap the large microphone control, ask a Git question,
+   and show the transcript and spoken local answer.
+5. Lock/background the phone during the answer and show the scoped media
+   notification and Stop control.
+6. Return to Settings and show the explicit STT/TTS locale and privacy states.
+7. If configured, open GitHub and show the connected account, repository, issue,
+   pull-request, and commit context.
+8. State clearly which checks were automated and which were performed on the
+   physical phone.
 
-Build the native development app with:
+## Verification status
 
-```bash
-cd frontend
-npm install
-npx expo prebuild --platform android
-npm run android
-```
+Source implementation and JavaScript/TypeScript checks are maintained in the
+repository's commit history. Android native compilation, native module
+autolinking, headset behavior, lock-screen playback, installed speech packs,
+and offline phone behavior must be verified on a machine with a writable
+Android SDK and a target device. Git Out does not claim those checks passed
+until they are run.
 
-The native runtime is configured for the New Architecture and CPU inference
-on `arm64-v8a` and `x86_64`. The screen exposes model loading, unload, prompt
-generation, and user-readable load/inference errors. It uses no network call
-for inference. For the critical offline check, install the development build,
-copy the model to the device before disconnecting it, then turn off Wi-Fi and
-mobile data, stop FastAPI and Ollama, load the model, and generate a response.
+## License and safety of local configuration
 
-Backend Ollama remains a development/runtime fallback from Phase 3. The mobile
-local inference path is the target architecture for the actual Git Out
-experience; these paths are intentionally separate. This environment has no
-Android SDK, emulator, or device, so real Android offline verification is
-still pending.
-
-### Mobile Local STT
-
-The Phase 5 speech path is independent of FastAPI, Ollama, cloud speech
-services, and bundled speech model weights:
-
-```text
-Microphone
-    ↓
-Android SpeechRecognizer
-    ↓
-Native Android on-device speech service
-```
-
-The app uses the maintained
-[`expo-speech-recognition`](https://github.com/jamsch/expo-speech-recognition)
-integration. Git Out requests `requiresOnDeviceRecognition: true`, which uses
-Android's explicit on-device recognizer on Android 13+ in this implementation.
-It deliberately does not rely on `EXTRA_PREFER_OFFLINE`: Android documents that
-hint as optional and allows recognizers to ignore it. If explicit on-device
-recognition is unavailable, the requested language model is not installed, or
-microphone permission is denied, Git Out stops before starting recognition and
-shows an actionable error. It never silently falls back to a network recognizer.
-
-The screen lets the user enter a BCP-47 language tag, defaulting to `en-US`.
-Before each recording, the app checks the device's installed on-device locale
-list and starts only with a matching language. A successful transcript replaces
-the current prompt text; manual prompt entry remains available. Phase 6 adds
-optional speech output after manual submission, described below.
-
-On-device availability depends on the Android version, recognition service, and
-downloaded system language packs:
-
-- Android 13/API 33 or newer is required by this app's explicit on-device path.
-- The device must report on-device recognition support and have the requested
-  language installed for offline use.
-- If the language is missing, install it from the device's on-device speech
-  recognition settings (often under **Settings → Security and privacy → More
-  privacy settings → Android System Intelligence → On-device speech
-  recognition**) and retry.
-- Recognition speed and accuracy depend on the system service, device, and
-  language pack. No model is stored in the Git Out app or repository.
-
-Build the native development app after installing the dependencies and
-regenerating native code:
-
-```bash
-cd frontend
-npm install
-npx expo prebuild --platform android
-npm run android
-```
-
-The critical offline STT check is: install the development build, ensure the
-requested system language pack is installed, turn off Wi-Fi and mobile data,
-stop FastAPI and Ollama, enter the installed language tag, record a short
-sentence, and confirm the transcript appears in the prompt input. Also verify
-that the app gives a clear unavailable-language/device message when the offline
-pack is absent. This repository's development environment has no connected
-Android device, so actual offline recognition remains pending until that phone
-test is performed.
-
-### Native Android TTS & voice conversation (Phase 6)
-
-**Record prompt → Stop and transcribe → review/edit prompt → Generate → listen.**
-The **Speak response** switch is off by default. When enabled, only the completed
-Qwen answer is spoken; the full answer stays visible. **Speak answer again / retry**
-also lets you explicitly replay a visible answer, even with auto-speech off.
-**Stop speaking** cancels playback and any pending automatic speech for the
-current generation. It does not cancel Qwen's computation or erase its answer.
-
-#### Native implementation and voice availability
-
-`frontend/modules/git-out-tts/` is a small Android-only local Expo module wrapping
-`android.speech.tts.TextToSpeech`. Expo autolinks it from `frontend/modules/` in
-development builds. It uses the existing Expo Modules API/New Architecture; no
-new npm runtime dependency or speech-model package is needed. No Whisper,
-Piper, Coqui, or separate TTS model is bundled or downloaded by Git Out.
-
-- Initialization waits for Android `OnInit`, with a 10-second timeout and
-  actionable failure messages. An explicit retry can initialize again after failure.
-- **Check TTS voice** queries the engine's voice list. TTS has its own BCP-47
-  language setting, independent of STT; both default to `en-US`. TTS requires an
-  exact locale match (for example, `en-GB` is not silently replaced by `en-US`).
-- Only voices reporting `isNetworkConnectionRequired == false` and not marked
-  `KEY_FEATURE_NOT_INSTALLED` are eligible. The native bridge rechecks the voice
-  and `isLanguageAvailable` immediately before speaking, checks `setVoice`, and
-  never substitutes a default/network voice. Empty or over-limit text is rejected.
-- Voice metadata is supplied by the installed engine; it is not proof of offline
-  behavior on every phone. Some engines report incomplete or inaccurate data.
-  Missing data and synthesis errors keep the text answer and offer retry.
-- TTS in this app requires Android 8/API 26+ for its audio-focus handling. The full
-  STT → Qwen → TTS flow still requires Android 13/API 33+ for existing STT checks.
-- This feature uses Android's system-selected TTS engine and media audio route.
-  Earphones/Bluetooth output and media volume are controlled by Android. No
-  speaker route is forced. Speech stops on audio focus loss (including transient
-  loss), audio-becoming-noisy events such as headphone removal, and backgrounding.
-
-Voice capabilities are separate: **Local LLM model** shows GGUF load state,
-**Offline speech input** checks Android STT availability/language packs, and
-**Speak response** shows TTS voice availability and playback/error state.
-An STT language pack does not necessarily provide a TTS voice for that language.
-
-#### Cancellation and lifecycle
-
-Native operations run on the main thread. TTS uses stop plus `QUEUE_FLUSH`, and
-JavaScript serializes start/stop commands with request revisions and utterance IDs.
-Old initialization results or playback callbacks cannot start/update a newer
-request. A new generation stops old speech first; rapid duplicate Generate taps
-are ignored until the current local inference finishes. Starting the microphone
-waits for TTS to stop, to avoid recognizing the app's own answer.
-
-Turning speech off, changing the TTS language, pressing Stop, or backgrounding the
-app suppresses pending autoplay. Returning to the app does not resume speech or
-the microphone automatically. STT is cancelled on background/unmount (including
-permission/support checks that are still pending); its on-device checks remain
-in place. TTS releases its engine, focus, listeners, and initialization promises
-on shutdown/module destruction. The LLM context is released after any in-flight
-generation finishes on unmount.
-
-This is a foreground, manually submitted conversation. Continuous listening,
-wake words, automatic reactivation, headset-button control, lock-screen playback,
-and a foreground media service are not implemented. Pocket/locked-screen operation
-is a next-phase goal; locking the screen currently stops speech. Answers longer
-than the engine's `getMaxSpeechInputLength()` limit remain text-only with a clear
-error; there is no token streaming or speech chunk queue.
-
-#### Setup and troubleshooting
-
-Install a new native development build (Expo Go and an older Phase 5 binary do
-not contain `GitOutTts`). With dependencies installed, build using
-`npm run android` from `frontend/` on a machine with a JDK and Android SDK. The
-module manifest supplies the Android 11+ `android.intent.action.TTS_SERVICE`
-package-visibility query. Hand-written module sources are tracked separately
-from the generated `frontend/android/` project. No clean/reset is needed.
-
-If no suitable voice is available, open Android **Settings → Text-to-speech
-output** (location varies by manufacturer), enable/update the preferred engine,
-and use its **Install voice data** settings to install the requested language.
-This user-directed setup may need internet. Return to Git Out, use **Check TTS
-voice**, and retry. A network-only voice is intentionally rejected. For silence,
-check media volume, earphone routing, and whether another app owns audio focus.
-Initialization failure, missing module, unsupported language, and synthesis
-failure appear under TTS while the generated text remains readable.
-
-#### Physical-device/offline verification — pending
-
-Unit tests mock the engine; they do not verify Android initialization, real voice
-data, earphone behavior, or offline speech. Perform these checks on the phone:
-
-1. Build/install the new development app; load the existing Qwen GGUF.
-2. Generate with **Speak response** off; confirm text-only inference still works.
-3. Check an installed TTS language, enable speech, and generate another answer.
-4. Stop midway, replay, and quickly start another request. Confirm no overlapping
-   or delayed stale speech. Start STT during playback and confirm output stops.
-5. Try a missing language/voice; confirm an actionable TTS error and retained text.
-6. Test earphones, disconnect them during speech, and background/return to the app.
-   Speech/input should stop with no automatic restart.
-7. Disable **both Wi-Fi and mobile data**, stop FastAPI/Ollama, and repeat STT,
-   local inference, TTS, stopping, and missing-language tests. Record phone model,
-   Android version, TTS engine/version, language/voice ID, and results.
-8. Verify that missing offline data yields an error, not a network fallback. For
-   additional evidence, inspect traffic from both the app and the installed
-   system speech engine while repeating the tests.
-
-Use a development build with Metro already reachable over USB (`adb reverse`) or
-a locally bundled release build when testing without wireless networking; Metro
-connectivity is distinct from inference/speech connectivity. GitHub fetching and
-initial dependency/model/system-voice downloads require internet. The mobile
-conversation path calls neither FastAPI/Ollama nor cloud speech APIs. Actual
-offline operation remains **unverified on a physical Android device**.
+Keep `frontend/.env`, `backend/.env`, model weights, audio recordings, signing
+files, and tokens out of Git. The repository includes `.env.example` templates
+with placeholders only. Do not place a GitHub token in frontend code, Expo
+public configuration, screenshots, logs, or challenge materials.
