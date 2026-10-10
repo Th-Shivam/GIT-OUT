@@ -8,12 +8,13 @@ interface Props {
   transcript: string;
   answer: string;
   error: string;
+  notice?: string;
   onMicrophone(): void;
   onStop(): void;
   onExit(): void;
 }
 
-export function PocketMode({ state, transcript, answer, error, onMicrophone, onStop, onExit }: Props) {
+export function PocketMode({ state, transcript, answer, error, notice = '', onMicrophone, onStop, onExit }: Props) {
   const waiting = state === 'Thinking' || state === 'Transcribing';
   const listening = state === 'Listening';
   const speaking = state === 'Speaking';
@@ -47,6 +48,7 @@ export function PocketMode({ state, transcript, answer, error, onMicrophone, onS
         </View>
 
         {error ? <Surface><Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text></Surface> : null}
+        {notice ? <Surface><Text style={styles.notice}>{notice}</Text></Surface> : null}
         <Surface raised>
           <Text style={styles.label}>You said</Text>
           <Text selectable style={transcript ? styles.text : styles.placeholder}>{transcript || 'Your completed question will appear here.'}</Text>
@@ -92,5 +94,6 @@ const styles = StyleSheet.create({
   text: { color: theme.colors.text, fontSize: 17, lineHeight: 26 },
   placeholder: { color: theme.colors.textMuted, fontSize: theme.typography.body, lineHeight: 23 },
   error: { color: '#ff7b72', fontSize: theme.typography.body, lineHeight: 22 },
+  notice: { color: '#e3b341', fontSize: theme.typography.small, lineHeight: 19 },
   footer: { color: theme.colors.textSubtle, fontSize: theme.typography.small, lineHeight: 19, paddingHorizontal: theme.spacing.sm },
 });

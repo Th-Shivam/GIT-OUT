@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { AppState, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, PermissionsAndroid, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   findStoredModel,
@@ -68,6 +68,7 @@ export default function App() {
   const historyKeysRef = useRef(new Set<string>());
   const [startingMic, setStartingMic] = useState(false);
   const [pocketEnabled, setPocketEnabled] = useState(false);
+  const [notificationNotice, setNotificationNotice] = useState('');
   const pocketRef = useRef(false);
   const previousSpeakRef = useRef(false);
   const mediaGateRef = useRef(new PocketCommandGate());
@@ -224,6 +225,13 @@ export default function App() {
     setError('');
     pocketRef.current = true;
     setPocketEnabled(true);
+    if (Platform.OS === 'android' && Number(Platform.Version) >= 33) {
+      void PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS).then((permission) => {
+        setNotificationNotice(permission === PermissionsAndroid.RESULTS.GRANTED
+          ? ''
+          : 'Notifications are disabled. Speech can continue, but lock-screen media controls may be unavailable.');
+      }).catch(() => setNotificationNotice('Notification permission was not available. Use the in-app Stop control if needed.'));
+    }
   };
 
   const exitPocket = () => {
@@ -266,6 +274,7 @@ export default function App() {
         transcript={partialTranscript || transcript}
         answer={response}
         error={error || inferenceError || speechOutput.error}
+        notice={notificationNotice}
         onMicrophone={recordOrTranscribe}
         onStop={stopPocket}
         onExit={exitPocket}
