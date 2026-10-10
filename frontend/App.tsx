@@ -1,10 +1,12 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -24,9 +26,17 @@ import {
   transcriptForPrompt,
   useSpeechRecognition,
 } from './src/local-stt';
+import { LocalTTS } from './src/local-tts/localTTS';
+import { NativeTTSEngine } from './src/local-tts/nativeTTSEngine';
+import { VoiceConversation } from './src/voice-conversation/voiceConversation';
 
 export default function App() {
   const localAI = useMemo(() => new LocalAI(new LlamaRNEngine()), []);
+  const tts = useMemo(() => new LocalTTS(new NativeTTSEngine()), []);
+  const conversation = useMemo(() => new VoiceConversation(localAI, tts), [localAI, tts]);
+  const { response, generating, error: inferenceError, speakResponse, language: ttsLanguage } =
+    useSyncExternalStore(conversation.subscribe, conversation.getSnapshot);
+  const speechOutput = useSyncExternalStore(tts.subscribe, tts.getSnapshot);
   const {
     isChecking,
     isRecording,
@@ -40,21 +50,46 @@ export default function App() {
   const [speechLanguage, setSpeechLanguage] = useState(DEFAULT_SPEECH_LANGUAGE);
   const [transcript, setTranscript] = useState('');
   const [prompt, setPrompt] = useState('Explain what a pull request is');
-  const [response, setResponse] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const actionRef = useRef(false);
+  const microphoneRef = useRef(false);
+  const mountedRef = useRef(true);
+  const lifecycleRef = useRef(0);
+  const [startingMic, setStartingMic] = useState(false);
+  const working = busy || generating;
+  const microphoneBusy = startingMic || isChecking || isRecording;
+  const ttsActive = speechOutput.state === 'preparing' || speechOutput.state === 'speaking';
+  const selectedTTSVoice = speechOutput.voice?.language.toLowerCase() === ttsLanguage.trim().replace(/_/g, '-').toLowerCase()
+    ? speechOutput.voice : null;
 
   useEffect(() => {
-    void findStoredModel().then(setModel);
+    mountedRef.current = true;
+    const lifecycle = ++lifecycleRef.current;
+    conversation.attach();
+    conversation.setForeground(AppState.currentState === 'active');
+    void findStoredModel().then((stored) => { if (mountedRef.current) setModel(stored); });
+    const subscription = AppState.addEventListener('change', (state) => {
+      conversation.setForeground(state === 'active');
+    });
     return () => {
-      void localAI.unloadModel();
+      mountedRef.current = false;
+      subscription.remove();
+      void conversation.detach().catch(() => undefined);
+      // Never release llama's context while its existing generate() is running.
+      void conversation.whenIdle().then(() => {
+        if (!mountedRef.current && lifecycleRef.current === lifecycle) return localAI.unloadModel();
+      }).catch(() => undefined);
     };
-  }, [localAI]);
+  }, [localAI, conversation]);
 
   const runAction = async (action: () => Promise<void>) => {
+    if (actionRef.current || microphoneRef.current || conversation.getSnapshot().generating) return;
+    actionRef.current = true;
     setBusy(true);
     setError('');
     try {
+      await conversation.stopSpeaking();
       await action();
     } catch (actionError) {
       setError(
@@ -65,6 +100,7 @@ export default function App() {
             : 'The local AI action failed.',
       );
     } finally {
+      actionRef.current = false;
       setBusy(false);
     }
   };
@@ -76,7 +112,7 @@ export default function App() {
       const storedModel = await pickAndStoreModel();
       if (storedModel) {
         setModel(storedModel);
-        setResponse('');
+        conversation.clearResponse();
       }
     });
 
@@ -100,10 +136,11 @@ export default function App() {
       setLoadProgress(0);
     });
 
-  const generate = () =>
-    runAction(async () => {
-      setResponse(await localAI.generate(prompt));
-    });
+  const generate = () => {
+    if (actionRef.current || microphoneRef.current) return;
+    setError('');
+    void conversation.generate(prompt);
+  };
 
   const recordOrTranscribe = () => {
     if (isRecording) {
@@ -111,15 +148,26 @@ export default function App() {
       return;
     }
 
+    if (microphoneRef.current || actionRef.current || conversation.getSnapshot().generating) return;
+    microphoneRef.current = true;
+    setStartingMic(true);
+
     setError('');
     setTranscript('');
-    void startRecognition(speechLanguage.trim())
+    // Wait until output stops before opening the mic, so TTS isn't transcribed.
+    void conversation.stopSpeaking()
+      .then(() => {
+        if (!mountedRef.current || AppState.currentState !== 'active') throw new Error('Return to Git Out and tap Record prompt again.');
+        return startRecognition(speechLanguage.trim());
+      })
       .then((nextTranscript) => {
+        if (!mountedRef.current) return;
         const promptText = transcriptForPrompt(nextTranscript);
         setTranscript(promptText);
         setPrompt(promptText);
       })
       .catch((actionError) => {
+        if (!mountedRef.current) return;
         setError(
           actionError instanceof NativeSpeechError
             ? actionError.message
@@ -127,12 +175,15 @@ export default function App() {
               ? actionError.message
               : 'The offline speech action failed.',
         );
+      }).finally(() => {
+        microphoneRef.current = false;
+        if (mountedRef.current) setStartingMic(false);
       });
   };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.eyebrow}>GIT OUT · PHASE 5</Text>
+      <Text style={styles.eyebrow}>GIT OUT · PHASE 6</Text>
       <Text style={styles.title}>Local AI</Text>
       <Text style={styles.subtitle}>
         A small Android-first proof that inference can happen on the device.
@@ -140,7 +191,7 @@ export default function App() {
 
       <View style={styles.card}>
         <View style={styles.row}>
-          <Text style={styles.label}>Model</Text>
+          <Text style={styles.label}>Local LLM model</Text>
           <Text style={styles.status}>{modelLoaded ? 'Loaded' : 'Not loaded'}</Text>
         </View>
         <Text style={styles.modelName}>{model?.name ?? 'No GGUF selected'}</Text>
@@ -151,12 +202,12 @@ export default function App() {
           <ActionButton
             label="Choose GGUF"
             onPress={chooseModel}
-            disabled={busy || isChecking || isRecording}
+            disabled={working || microphoneBusy}
           />
           <ActionButton
             label={modelLoaded ? 'Unload' : 'Load model'}
             onPress={modelLoaded ? unloadModel : loadModel}
-            disabled={busy || isChecking || isRecording || (!modelLoaded && !model)}
+            disabled={working || microphoneBusy || (!modelLoaded && !model)}
             secondary
           />
         </View>
@@ -173,6 +224,8 @@ export default function App() {
           onChangeText={setSpeechLanguage}
           autoCapitalize="none"
           autoCorrect={false}
+          editable={!microphoneBusy}
+          accessibilityLabel="STT language code"
           placeholder="en-US"
           placeholderTextColor="#7d887f"
           style={styles.languageInput}
@@ -188,12 +241,12 @@ export default function App() {
           label={
             isRecording
               ? 'Stop and transcribe'
-              : isChecking
+              : isChecking || startingMic
                 ? 'Checking offline support...'
                 : 'Record prompt'
           }
           onPress={recordOrTranscribe}
-          disabled={isChecking || busy}
+          disabled={working || (!isRecording && (startingMic || isChecking))}
         />
         {partialTranscript || transcript ? (
           <View style={styles.transcriptBox}>
@@ -203,6 +256,59 @@ export default function App() {
             <Text style={styles.transcript}>{partialTranscript || transcript}</Text>
           </View>
         ) : null}
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <Text style={styles.label}>Speak response</Text>
+          <Switch
+            accessibilityLabel="Speak completed responses"
+            value={speakResponse}
+            onValueChange={(enabled) => {
+              conversation.setSpeakResponse(enabled);
+              if (enabled) void tts.prepare(ttsLanguage).catch(() => undefined);
+            }}
+          />
+        </View>
+        <Text style={styles.hint}>Android TTS · installed voice: {selectedTTSVoice?.id ?? 'not checked / unavailable'}</Text>
+        <Text style={styles.label}>TTS language (BCP-47)</Text>
+        <TextInput
+          accessibilityLabel="TTS language code"
+          value={ttsLanguage}
+          onChangeText={(language) => conversation.setLanguage(language)}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={styles.languageInput}
+          placeholder="en-US"
+        />
+        <Text style={styles.hint} accessibilityLiveRegion="polite">Speech output: {speechOutput.state}</Text>
+        {speechOutput.voices.length ? (
+          <Text style={styles.hint}>
+            Installed non-network TTS languages: {Array.from(new Set(speechOutput.voices.filter((voice) => voice.installed && !voice.networkRequired).map((voice) => voice.language))).join(', ') || 'none'}
+          </Text>
+        ) : null}
+        <View style={styles.buttonRow}>
+          <ActionButton
+            label="Check TTS voice"
+            onPress={() => { void tts.prepare(ttsLanguage).catch(() => undefined); }}
+            disabled={working || microphoneBusy || ttsActive}
+            secondary
+          />
+          <ActionButton
+            label="Stop speaking"
+            onPress={() => { void conversation.stopSpeaking().catch(() => undefined); }}
+            disabled={!ttsActive && !(generating && speakResponse)}
+          />
+        </View>
+        <ActionButton
+          label="Speak answer again / retry"
+          onPress={() => {
+            if (!microphoneRef.current && !actionRef.current) void conversation.retrySpeech().catch(() => undefined);
+          }}
+          disabled={!response.trim() || working || microphoneBusy}
+          secondary
+        />
+        {speechOutput.error ? <Text style={styles.ttsError} accessibilityLiveRegion="polite">TTS: {speechOutput.error} Your text answer is kept.</Text> : null}
       </View>
 
       <View style={styles.card}>
@@ -216,16 +322,16 @@ export default function App() {
           style={styles.input}
         />
         <ActionButton
-          label={busy ? 'Working...' : 'Generate'}
+          label={working ? 'Working...' : 'Generate'}
           onPress={generate}
-          disabled={busy || isChecking || isRecording || !modelLoaded || !prompt.trim()}
+          disabled={working || microphoneBusy || !modelLoaded || !prompt.trim()}
         />
-        {busy ? <ActivityIndicator color="#f4f1e8" style={styles.spinner} /> : null}
+        {working ? <ActivityIndicator color="#f4f1e8" style={styles.spinner} /> : null}
       </View>
 
-      {error ? (
+      {error || inferenceError ? (
         <View style={styles.errorBox}>
-          <Text style={styles.errorText}>{error}</Text>
+          <Text style={styles.errorText}>{error || inferenceError}</Text>
         </View>
       ) : null}
 
@@ -306,6 +412,11 @@ const styles = StyleSheet.create({
     color: '#d0e2d3',
     fontSize: 13,
     lineHeight: 19,
+  },
+  ttsError: {
+    color: '#ffcec6',
+    fontSize: 14,
+    lineHeight: 21,
   },
   languageInput: {
     backgroundColor: '#fffdf7',
