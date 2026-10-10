@@ -91,6 +91,12 @@ export class LocalTTS {
         }
         this.activeId = `git-out-${revision}`;
         await this.engine.speak(this.activeId, text.trim(), voice.language, voice.id);
+        // Native speak() returns once the utterance is accepted, before some
+        // engines deliver onStart. Treat it as active so a background event
+        // cannot cancel speech that has already started at the platform layer.
+        if (revision === this.revision && this.snapshot.state === 'preparing') {
+          this.update({ state: 'speaking' });
+        }
       } catch (error) {
         if (revision !== this.revision) return;
         this.activeId = null;

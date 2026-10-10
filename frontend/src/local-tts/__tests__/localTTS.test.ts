@@ -143,4 +143,13 @@ describe('LocalTTS', () => {
     expect(tts.getSnapshot().state).toBe('speaking');
     expect(engine.stop).toHaveBeenCalledTimes(stops);
   });
+
+  it('marks accepted native speech active before the first progress callback', async () => {
+    const { engine } = fakeTTS();
+    const tts = new LocalTTS(engine);
+
+    await tts.speak('Accepted answer', 'en-US');
+
+    expect(tts.getSnapshot().state).toBe('speaking');
+  });
 });
